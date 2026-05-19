@@ -61,8 +61,20 @@ class DebugHttpServer(
         routing {
             get("/") {
                 call.respondText(
-                    buildIndexHtml(),
+                    DebugWebAssets.indexHtml(),
                     ContentType.Text.Html,
+                )
+            }
+            get("/app.js") {
+                call.respondText(
+                    DebugWebAssets.appJs(),
+                    ContentType.Application.JavaScript,
+                )
+            }
+            get("/app.css") {
+                call.respondText(
+                    DebugWebAssets.appCss(),
+                    ContentType.Text.CSS,
                 )
             }
             get("/help") {
@@ -467,40 +479,6 @@ class DebugHttpServer(
         }.toString()
     }
 
-    private fun buildIndexHtml(): String {
-        val snapshot = store.snapshot().value
-        val operations = store.operations().value.takeLast(10).reversed()
-        return """
-            <!doctype html>
-            <html lang="en">
-            <head>
-              <meta charset="utf-8" />
-              <meta name="viewport" content="width=device-width, initial-scale=1" />
-              <title>${escapeHtml(snapshot.appName)}</title>
-              <style>
-                body { font-family: sans-serif; padding: 20px; background: #f6f7f9; color: #222; }
-                .card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
-                code, pre { background: #f0f2f5; border-radius: 8px; padding: 2px 6px; }
-                pre { padding: 12px; white-space: pre-wrap; word-break: break-word; }
-                a { color: #1677ff; text-decoration: none; }
-                ul { padding-left: 20px; }
-              </style>
-            </head>
-            <body>
-              <div class="card">
-                <h1>${escapeHtml(snapshot.appName)}</h1>
-                <p>screen=${escapeHtml(snapshot.screenName)} nodeCount=${snapshot.nodes.size} logCount=${store.operations().value.size}</p>
-                <p><a href="/help">/help</a> · <a href="/action">/action</a> · <a href="/logs">/logs</a> · <a href="/state">/state</a> · <a href="/snapshot">/snapshot</a></p>
-              </div>
-              <div class="card">
-                <h2>Recent Logs</h2>
-                <pre>${escapeHtml(JSONArray().apply { operations.forEach { put(it.toLogQueryJson()) } }.toString(2))}</pre>
-              </div>
-            </body>
-            </html>
-        """.trimIndent()
-    }
-
     private fun buildActionTargets(): List<DebugActionTarget> {
         val snapshot = store.snapshot().value
         val nodeById = snapshot.nodes.associateBy { it.id }
@@ -760,9 +738,6 @@ class DebugHttpServer(
         }.getOrNull()
     }
 
-    private fun escapeHtml(value: String): String {
-        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    }
 }
 
 private val compactNodeFields = linkedSetOf(

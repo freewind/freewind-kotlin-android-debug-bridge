@@ -13,6 +13,11 @@
 
 库模块：`debug-server`
 
+仓库内同时维护：
+
+- `web/`：给人看的 React + Antd + TypeScript 调试台源码
+- `demo-app/`：接好这套 bridge 的 Android Compose demo app
+
 主要 API：
 
 - `DebugBridge`
@@ -206,6 +211,33 @@ curl "http://127.0.0.1:8765/snapshot"
 curl "http://127.0.0.1:8765/snapshot?targetId=save_button&scope=branchToRoot&fields=id,type,text,bounds"
 ```
 
+### 5. web 控制台与 demo app
+
+构建 web 并同步到 server 内置资产：
+
+```bash
+cd web
+pnpm install
+pnpm build
+```
+
+编译 demo app：
+
+```bash
+./gradlew :demo-app:assembleDebug
+```
+
+看效果：
+
+1. 安装运行 `demo-app`
+2. `adb forward tcp:8765 tcp:8765`
+3. 打开 `http://127.0.0.1:8765/`
+4. 在 web 控制台里：
+   - 看 `logs` 表格与查询
+   - 查 `state`
+   - 查 `snapshot`
+   - 直接点动态生成的 action 按钮
+
 ## 设计约束
 
 - 这是“已注册关键节点”模型，不是自动穷举 Compose 全树
@@ -230,6 +262,7 @@ http://127.0.0.1:8765
 总原则：
 
 - `GET /`：返回给人看的可视化页
+- 当前实现是 React + Antd 控制台，不再是静态占位 HTML
 - `GET /help`：返回动态全量 help，只给结构、能力、字段、示例，不给大数据
 - `GET /action`、`GET /logs`、`GET /state`、`GET /snapshot`：默认返回该资源当前时刻的 summary
 - `DELETE /logs`：清空当前内存里的全部日志
@@ -243,6 +276,13 @@ http://127.0.0.1:8765
 - 给人直接打开看
 - 返回可视化调试页
 - 页面里展示概览与入口，不直接承载 AI 协议
+- 当前页支持：
+  - 日志表格
+  - logs 查询
+  - state 查询
+  - snapshot 查询
+  - action 动态按钮
+  - 手动 action 表单
 
 返回应包含：
 
@@ -785,7 +825,7 @@ AI 能否查到/操作到，取决于你有没有先把信息接进来：
   - 真执行
 - 必须打通：
   - `targetId -> handler`
-  - handler 接收 `action/text/dx/dy/args`
+  - handler 接收 `action/text/dx/dy`
   - action req 自动留一条 `source=ai` log
 
 ### P4. 日志协议

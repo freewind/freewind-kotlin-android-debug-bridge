@@ -3,4 +3,7 @@
 .kotlin/
 build/
 local.properties
+demo-app/build/
+web/dist/
+web/node_modules/
 debug-server/build/
