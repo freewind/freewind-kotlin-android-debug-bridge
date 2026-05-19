@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && node ./scripts/sync-assets.mjs",
+    "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && vite build && node ./scripts/sync-assets.mjs",
     "sync-assets": "node ./scripts/sync-assets.mjs"
   },
   "dependencies": {
