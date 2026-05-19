@@ -3,6 +3,7 @@ package com.freewind.android.debugserver.compose
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import com.freewind.android.debugserver.DebugBridge
+import com.freewind.android.debugserver.domain.models.DebugActionSpec
 import com.freewind.android.debugserver.domain.models.DebugActionRequest
 import com.freewind.android.debugserver.domain.models.DebugActionResult
 
@@ -11,11 +12,17 @@ import com.freewind.android.debugserver.domain.models.DebugActionResult
 fun DebugBridge.registerComposeAction(
     targetId: String,
     registerKeys: Array<out Any?> = emptyArray(),
+    targetType: String? = null,
+    screenName: String? = null,
+    actions: List<DebugActionSpec> = emptyList(),
     action: suspend (DebugActionRequest) -> DebugActionResult,
 ) {
-    DisposableEffect(targetId, *registerKeys) {
+    DisposableEffect(targetId, targetType, screenName, actions, *registerKeys) {
         registerAction(
             targetId = targetId,
+            targetType = targetType,
+            screenName = screenName,
+            actions = actions,
             action = action,
         )
         onDispose {
@@ -29,11 +36,17 @@ fun DebugBridge.registerComposeAction(
 fun DebugBridge.RegisterDebugAction(
     targetId: String,
     registerKeys: Array<out Any?> = emptyArray(),
+    targetType: String? = null,
+    screenName: String? = null,
+    actions: List<DebugActionSpec> = emptyList(),
     action: suspend (DebugActionRequest) -> DebugActionResult,
 ) {
     registerComposeAction(
         targetId = targetId,
         registerKeys = registerKeys,
+        targetType = targetType,
+        screenName = screenName,
+        actions = actions,
         action = action,
     )
 }

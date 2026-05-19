@@ -1,22 +1,31 @@
 package com.freewind.android.debugserver.infra.system
 
+import com.freewind.android.debugserver.domain.models.DebugActionSpec
 import com.freewind.android.debugserver.domain.models.DebugActionRequest
 import com.freewind.android.debugserver.domain.models.DebugActionResult
+import com.freewind.android.debugserver.domain.models.DebugActionTarget
 import java.util.concurrent.ConcurrentHashMap
 
 // 动作总线。
 class DebugActionBus {
     private val actions = ConcurrentHashMap<String, suspend (DebugActionRequest) -> DebugActionResult>()
+    private val targets = ConcurrentHashMap<String, DebugActionTarget>()
 
     fun registerAction(
-        targetId: String,
+        target: DebugActionTarget,
         action: suspend (DebugActionRequest) -> DebugActionResult,
     ) {
-        actions[targetId] = action
+        actions[target.targetId] = action
+        targets[target.targetId] = target.normalize()
     }
 
     fun unregisterAction(targetId: String) {
         actions.remove(targetId)
+        targets.remove(targetId)
+    }
+
+    fun targets(): List<DebugActionTarget> {
+        return targets.values.sortedBy { it.targetId }
     }
 
     suspend fun dispatch(request: DebugActionRequest): DebugActionResult {
@@ -30,4 +39,18 @@ class DebugActionBus {
         )
         return action(request)
     }
+}
+
+private fun DebugActionTarget.normalize(): DebugActionTarget {
+    val normalizedActions = if (actions.isEmpty()) {
+        listOf(
+            DebugActionSpec(
+                name = "unknown",
+                summary = "action metadata missing; inspect handler or docs",
+            ),
+        )
+    } else {
+        actions
+    }
+    return copy(actions = normalizedActions)
 }

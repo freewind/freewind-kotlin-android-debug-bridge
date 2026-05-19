@@ -30,6 +30,7 @@ android {
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.01.01")
+    val ktorVersion = "2.3.12"
 
     api("androidx.core:core-ktx:1.15.0")
     api("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
@@ -37,6 +38,8 @@ dependencies {
     api("androidx.compose.foundation:foundation")
     api("androidx.compose.ui:ui")
     api("androidx.compose.ui:ui-tooling-preview")
+    implementation("io.ktor:ktor-server-core:$ktorVersion")
+    implementation("io.ktor:ktor-server-cio:$ktorVersion")
 
     debugApi("androidx.compose.ui:ui-tooling")
 }

@@ -1,31 +1,34 @@
 package com.freewind.android.debugserver.infra.persistence
 
-import android.util.Log
 import com.freewind.android.debugserver.domain.handler.DebugServerHandler
 import com.freewind.android.debugserver.domain.models.DebugActionRequest
 import com.freewind.android.debugserver.domain.models.DebugActionResult
+import com.freewind.android.debugserver.domain.models.DebugActionSpec
+import com.freewind.android.debugserver.domain.models.DebugActionTarget
 import com.freewind.android.debugserver.domain.models.DebugBounds
 import com.freewind.android.debugserver.domain.models.DebugNode
 import com.freewind.android.debugserver.domain.models.DebugOperation
 import com.freewind.android.debugserver.domain.models.DebugOperationSource
-import com.freewind.android.debugserver.domain.models.DebugOperationsQuery
-import com.freewind.android.debugserver.domain.models.DebugOperationsResult
 import com.freewind.android.debugserver.domain.models.DebugSnapshot
 import com.freewind.android.debugserver.domain.models.DebugSnapshotQuery
 import com.freewind.android.debugserver.domain.store.DebugServerStore
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.io.OutputStream
-import java.net.InetAddress
-import java.net.ServerSocket
-import java.net.Socket
-import java.net.URLDecoder
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import io.ktor.http.ContentType
+import io.ktor.http.Parameters
+import io.ktor.server.application.Application
+import io.ktor.server.application.call
+import io.ktor.server.cio.CIO
+import io.ktor.server.engine.ApplicationEngine
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.request.receiveText
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.delete
+import io.ktor.server.routing.get
+import io.ktor.server.routing.post
+import io.ktor.server.routing.routing
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -36,227 +39,480 @@ class DebugHttpServer(
     private val store: DebugServerStore,
     private val handler: DebugServerHandler,
 ) {
-    private val scope = CoroutineScope(Job() + Dispatchers.IO)
-    private var serverJob: Job? = null
-    private var serverSocket: ServerSocket? = null
+    private var server: ApplicationEngine? = null
 
     fun start() {
-        if (serverJob != null) {
+        if (server != null) {
             return
         }
-        serverJob = scope.launch {
-            try {
-                serverSocket = ServerSocket(port, 50, InetAddress.getByName(host))
-                while (true) {
-                    val socket = serverSocket?.accept() ?: break
-                    launch {
-                        socket.use(::handleSocket)
-                    }
-                }
-            } catch (throwable: Throwable) {
-                Log.e("DebugHttpServer", "server stopped", throwable)
-            }
+        server = embeddedServer(CIO, host = host, port = port) {
+            installRoutes()
+        }.also {
+            it.start(wait = false)
         }
     }
 
     fun stop() {
-        serverSocket?.close()
-        serverSocket = null
-        serverJob?.cancel()
-        serverJob = null
-        scope.cancel()
+        server?.stop(100, 1_000)
+        server = null
     }
 
-    private fun handleSocket(socket: Socket) {
-        val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
-        val firstLine = reader.readLine() ?: return
-        val headers = mutableMapOf<String, String>()
-        while (true) {
-            val line = reader.readLine() ?: break
-            if (line.isBlank()) {
-                break
-            }
-            val separatorIndex = line.indexOf(':')
-            if (separatorIndex > 0) {
-                val key = line.substring(0, separatorIndex).trim().lowercase()
-                val value = line.substring(separatorIndex + 1).trim()
-                headers[key] = value
-            }
-        }
-
-        val parts = firstLine.split(" ")
-        val method = parts.getOrNull(0).orEmpty()
-        val requestTarget = parts.getOrNull(1).orEmpty()
-        val route = requestTarget.substringBefore("?")
-        val queryParams = parseQueryParams(requestTarget.substringAfter("?", ""))
-        val contentLength = headers["content-length"]?.toIntOrNull() ?: 0
-        val body = readBody(reader, contentLength)
-
-        when {
-            method == "OPTIONS" -> {
-                writeText(socket.getOutputStream(), 200, "ok")
-            }
-            method == "GET" && route == "/" -> {
-                writeHtml(
-                    socket.getOutputStream(),
-                    buildIndexHtml(
-                        snapshot = store.snapshot().value,
-                        operations = store.operations().value.takeLast(20).reversed(),
-                    ),
+    private fun Application.installRoutes() {
+        routing {
+            get("/") {
+                call.respondText(
+                    buildIndexHtml(),
+                    ContentType.Text.Html,
                 )
             }
-            method == "GET" && route == "/snapshot" -> {
-                val query = parseSnapshotQuery(queryParams, null)
-                val snapshot = handler.querySnapshot(query)
-                writeJson(socket.getOutputStream(), snapshot.toJsonString(query))
-            }
-            method == "POST" && route == "/snapshot/query" -> {
-                val query = parseSnapshotQuery(queryParams, readJsonObject(body))
-                val snapshot = handler.querySnapshot(query)
-                writeJson(socket.getOutputStream(), snapshot.toJsonString(query))
-            }
-            method == "GET" && route == "/operations" -> {
-                val query = parseOperationsQuery(queryParams)
-                val result = handler.queryOperations(query)
-                writeJson(socket.getOutputStream(), result.toJsonString(query))
-            }
-            method == "GET" && route == "/logs" -> {
-                writeJson(socket.getOutputStream(), operationsLogToJsonString(store.operations().value))
-            }
-            method == "POST" && route == "/action" -> {
-                val request = parseActionRequest(body)
-                val result = runBlocking {
-                    handler.performAction(request)
-                }
-                writeJson(socket.getOutputStream(), result.toJsonString())
-            }
-            else -> {
-                writeText(socket.getOutputStream(), 404, "not found")
-            }
-        }
-    }
-
-    private fun writeHtml(outputStream: OutputStream, body: String) {
-        writeResponse(outputStream, "text/html; charset=utf-8", 200, body)
-    }
-
-    private fun writeJson(outputStream: OutputStream, body: String) {
-        writeResponse(outputStream, "application/json; charset=utf-8", 200, body)
-    }
-
-    private fun writeText(outputStream: OutputStream, statusCode: Int, body: String) {
-        writeResponse(outputStream, "text/plain; charset=utf-8", statusCode, body)
-    }
-
-    private fun writeResponse(
-        outputStream: OutputStream,
-        contentType: String,
-        statusCode: Int,
-        body: String,
-    ) {
-        val bytes = body.toByteArray(Charsets.UTF_8)
-        outputStream.write(
-            buildString {
-                append("HTTP/1.1 ")
-                append(statusCode)
-                append(
-                    when (statusCode) {
-                        200 -> " OK"
-                        404 -> " Not Found"
-                        else -> ""
-                    },
+            get("/help") {
+                call.respondText(
+                    buildHelpJson(),
+                    ContentType.Application.Json,
                 )
-                append("\r\n")
-                append("Content-Type: ")
-                append(contentType)
-                append("\r\n")
-                append("Content-Length: ")
-                append(bytes.size)
-                append("\r\n")
-                append("Connection: close\r\n")
-                append("Access-Control-Allow-Origin: *\r\n")
-                append("Access-Control-Allow-Methods: GET,POST,OPTIONS\r\n")
-                append("Access-Control-Allow-Headers: Content-Type\r\n")
-                append("\r\n")
-            }.toByteArray(Charsets.UTF_8),
-        )
-        outputStream.write(bytes)
-        outputStream.flush()
-    }
-
-    private fun readBody(
-        reader: BufferedReader,
-        contentLength: Int,
-    ): String {
-        if (contentLength <= 0) {
-            return ""
-        }
-        val buffer = CharArray(contentLength)
-        var offset = 0
-        while (offset < contentLength) {
-            val readCount = reader.read(buffer, offset, contentLength - offset)
-            if (readCount <= 0) {
-                break
             }
-            offset += readCount
+            get("/action") {
+                call.respondText(
+                    buildActionJson(call.request.queryParameters),
+                    ContentType.Application.Json,
+                )
+            }
+            post("/action") {
+                val request = parseActionRequest(call.receiveText())
+                val result = handler.performAction(request)
+                call.respondText(
+                    result.toHttpJsonString(request),
+                    ContentType.Application.Json,
+                )
+            }
+            get("/logs") {
+                val queryParams = call.request.queryParameters
+                call.respondText(
+                    if (queryParams.hasEntries()) buildLogsQueryJson(queryParams) else buildLogsSummaryJson(),
+                    ContentType.Application.Json,
+                )
+            }
+            delete("/logs") {
+                val deletedCount = store.operations().value.size
+                store.clearOperations()
+                call.respondText(
+                    JSONObject()
+                        .put("ok", true)
+                        .put("deletedCount", deletedCount)
+                        .toString(),
+                    ContentType.Application.Json,
+                )
+            }
+            get("/state") {
+                val queryParams = call.request.queryParameters
+                call.respondText(
+                    if (queryParams.hasEntries()) buildStateQueryJson(queryParams) else buildStateSummaryJson(),
+                    ContentType.Application.Json,
+                )
+            }
+            get("/snapshot") {
+                val queryParams = call.request.queryParameters
+                call.respondText(
+                    if (queryParams.hasEntries()) buildSnapshotQueryJson(queryParams) else buildSnapshotSummaryJson(),
+                    ContentType.Application.Json,
+                )
+            }
         }
-        return String(buffer, 0, offset)
     }
 
-    private fun parseQueryParams(rawQuery: String): Map<String, List<String>> {
-        if (rawQuery.isBlank()) {
-            return emptyMap()
-        }
-        return rawQuery.split("&")
-            .filter { it.isNotBlank() }
-            .groupBy(
-                keySelector = { part ->
-                    decodeUrl(part.substringBefore("="))
-                },
-                valueTransform = { part ->
-                    decodeUrl(part.substringAfter("=", ""))
+    private fun buildHelpJson(): String {
+        val snapshot = store.snapshot().value
+        val actionTargets = buildActionTargets()
+        val operations = store.operations().value
+        return JSONObject().apply {
+            put("appName", snapshot.appName)
+            put("screenName", snapshot.screenName)
+            put("serverTime", nowAsWireTime())
+            put(
+                "capabilities",
+                JSONArray().apply {
+                    listOf("action", "logs", "state", "snapshot").forEach(::put)
                 },
             )
+            put(
+                "counts",
+                JSONObject().apply {
+                    put("actionTargetCount", actionTargets.size)
+                    put("logCount", operations.size)
+                    put("stateKeyCount", snapshot.appState.size)
+                    put("snapshotNodeCount", snapshot.nodes.size)
+                },
+            )
+            put(
+                "endpoints",
+                JSONArray().apply {
+                    put(
+                        endpointJson(
+                            method = "GET",
+                            path = "/",
+                            summary = "open human-readable debug console",
+                        ),
+                    )
+                    put(
+                        endpointJson(
+                            method = "GET",
+                            path = "/help",
+                            summary = "return dynamic full help for AI",
+                        ),
+                    )
+                    put(
+                        endpointJson(
+                            method = "GET",
+                            path = "/action",
+                            summary = "show executable targets and actions",
+                            queryFields = listOf("targetId", "action", "screen"),
+                        ),
+                    )
+                    put(
+                        endpointJson(
+                            method = "POST",
+                            path = "/action",
+                            summary = "trigger one concrete action",
+                            bodyFields = listOf("action", "targetId", "text", "dx", "dy"),
+                        ),
+                    )
+                    put(
+                        endpointJson(
+                            method = "GET",
+                            path = "/logs",
+                            summary = "show log summary or query matching logs",
+                            queryFields = listOf("event", "level", "source", "targetId", "screen", "from", "to", "limit", "keyword"),
+                        ),
+                    )
+                    put(
+                        endpointJson(
+                            method = "DELETE",
+                            path = "/logs",
+                            summary = "delete all existing logs",
+                        ),
+                    )
+                    put(
+                        endpointJson(
+                            method = "GET",
+                            path = "/state",
+                            summary = "show state summary or query state values",
+                            queryFields = listOf("keys", "targetId", "scope"),
+                        ),
+                    )
+                    put(
+                        endpointJson(
+                            method = "GET",
+                            path = "/snapshot",
+                            summary = "show tree summary or query node snapshot",
+                            queryFields = listOf("targetId", "scope", "depth", "types", "textKeyword", "fields", "limit"),
+                        ),
+                    )
+                },
+            )
+            put(
+                "examples",
+                JSONArray().apply {
+                    listOf(
+                        "GET /help",
+                        "GET /logs",
+                        "GET /snapshot?targetId=save_button&scope=branchToRoot&fields=id,type,text,bounds",
+                        "POST /action {\"action\":\"click\",\"targetId\":\"save_button\"}",
+                    ).forEach(::put)
+                },
+            )
+        }.toString()
     }
 
-    private fun parseSnapshotQuery(
-        queryParams: Map<String, List<String>>,
-        bodyJson: JSONObject?,
-    ): DebugSnapshotQuery {
-        val snapshotFields = readStringSet(queryParams, bodyJson, "snapshotFields")
-        val nodeFields = readStringSet(queryParams, bodyJson, "nodeFields")
-        val appStateKeys = readStringSet(queryParams, bodyJson, "appStateKeys")
-        val nodeIds = readStringSet(queryParams, bodyJson, "nodeIds")
-        return DebugSnapshotQuery(
-            compact = readBoolean(queryParams, bodyJson, "compact") ?: true,
-            snapshotFields = snapshotFields,
-            nodeFields = nodeFields,
-            appStateKeys = appStateKeys,
-            nodeIds = nodeIds,
-            includeAncestors = readBoolean(queryParams, bodyJson, "includeAncestors") ?: false,
-            ancestorDepth = readInt(queryParams, bodyJson, "ancestorDepth"),
-            descendantDepth = readInt(queryParams, bodyJson, "descendantDepth") ?: 0,
-            visibleOnly = readBoolean(queryParams, bodyJson, "visibleOnly") ?: false,
-            clickableOnly = readBoolean(queryParams, bodyJson, "clickableOnly") ?: false,
-            types = readStringSet(queryParams, bodyJson, "types"),
-            textQuery = readString(queryParams, bodyJson, "textQuery"),
-            limit = readInt(queryParams, bodyJson, "limit"),
-        )
+    private fun endpointJson(
+        method: String,
+        path: String,
+        summary: String,
+        queryFields: List<String> = emptyList(),
+        bodyFields: List<String> = emptyList(),
+    ): JSONObject {
+        return JSONObject().apply {
+            put("method", method)
+            put("path", path)
+            put("summary", summary)
+            if (queryFields.isNotEmpty()) {
+                put("queryFields", JSONArray().apply { queryFields.forEach(::put) })
+            }
+            if (bodyFields.isNotEmpty()) {
+                put("bodyFields", JSONArray().apply { bodyFields.forEach(::put) })
+            }
+        }
     }
 
-    private fun parseOperationsQuery(queryParams: Map<String, List<String>>): DebugOperationsQuery {
-        val sources = queryParams["sources"]
-            .orEmpty()
-            .flatMap { value -> splitCsv(value) }
-            .mapNotNull(DebugOperationSource::fromWireValue)
-            .toSet()
-        return DebugOperationsQuery(
-            afterSeq = queryParams.singleValue("afterSeq")?.toLongOrNull(),
-            limit = queryParams.singleValue("limit")?.toIntOrNull() ?: 20,
-            consume = queryParams.singleValue("consume").toBooleanStrictOrFalse(),
-            sources = sources,
-            groupBySource = queryParams.singleValue("groupBySource").toBooleanStrictOrFalse(),
-        )
+    private fun buildActionJson(queryParams: Parameters): String {
+        val targetId = queryParams.singleValue("targetId")
+        val actionName = queryParams.singleValue("action")
+        val screen = queryParams.singleValue("screen")
+        val items = buildActionTargets()
+            .mapNotNull { target ->
+                val filteredActions = target.actions.filter { action ->
+                    actionName == null || action.name == actionName
+                }
+                val normalizedTarget = target.copy(actions = filteredActions)
+                normalizedTarget.takeIf {
+                    (targetId == null || normalizedTarget.targetId == targetId) &&
+                        (screen == null || normalizedTarget.screenName == screen) &&
+                        normalizedTarget.actions.isNotEmpty()
+                }
+            }
+        return JSONObject().apply {
+            put(
+                "summary",
+                JSONObject().apply {
+                    put("targetCount", items.size)
+                    put("actionCount", items.sumOf { it.actions.size })
+                },
+            )
+            put(
+                "items",
+                JSONArray().apply {
+                    items.forEach { target ->
+                        put(target.toJsonObject())
+                    }
+                },
+            )
+        }.toString()
+    }
+
+    private fun buildLogsSummaryJson(): String {
+        val operations = store.operations().value
+        val levelCounts = operations.groupingBy(::operationLevel).eachCount()
+        val sourceCounts = operations.groupingBy { it.source.wireValue }.eachCount()
+        val eventCountsTop = operations.groupingBy { it.action }.eachCount()
+            .entries
+            .sortedByDescending { it.value }
+            .take(10)
+        return JSONObject().apply {
+            put(
+                "summary",
+                JSONObject().apply {
+                    put("total", operations.size)
+                    put(
+                        "timeRange",
+                        JSONObject().apply {
+                            putOrNull("from", operations.minOfOrNull { formatEpochMs(it.createdAtEpochMs) })
+                            putOrNull("to", operations.maxOfOrNull { formatEpochMs(it.createdAtEpochMs) })
+                        },
+                    )
+                    put(
+                        "levelCounts",
+                        levelCounts.toIntMapJsonObject(),
+                    )
+                    put(
+                        "sourceCounts",
+                        sourceCounts.toIntMapJsonObject(),
+                    )
+                    put(
+                        "eventCountsTop",
+                        JSONObject().apply {
+                            eventCountsTop.forEach { (key, value) ->
+                                put(key, value)
+                            }
+                        },
+                    )
+                },
+            )
+        }.toString()
+    }
+
+    private fun buildLogsQueryJson(queryParams: Parameters): String {
+        val event = queryParams.singleValue("event")
+        val level = queryParams.singleValue("level")
+        val source = queryParams.singleValue("source")
+        val targetId = queryParams.singleValue("targetId")
+        val screen = queryParams.singleValue("screen")
+        val keyword = queryParams.singleValue("keyword")
+        val afterSeq = queryParams.singleValue("afterSeq")?.toLongOrNull()
+        val fromEpochMs = queryParams.singleValue("from")?.let(::parseWireTime)
+        val toEpochMs = queryParams.singleValue("to")?.let(::parseWireTime)
+        val limit = queryParams.singleValue("limit")?.toIntOrNull() ?: 20
+        val filtered = store.operations().value
+            .asSequence()
+            .filter { afterSeq == null || it.seq > afterSeq }
+            .filter { event == null || it.action == event }
+            .filter { level == null || operationLevel(it) == level }
+            .filter { source == null || it.source.wireValue == source }
+            .filter { targetId == null || it.targetId == targetId }
+            .filter { screen == null || it.screenName == screen }
+            .filter { fromEpochMs == null || it.createdAtEpochMs >= fromEpochMs }
+            .filter { toEpochMs == null || it.createdAtEpochMs <= toEpochMs }
+            .filter { keyword == null || it.matchesKeyword(keyword) }
+            .take(limit.coerceAtLeast(0))
+            .toList()
+        return JSONObject().apply {
+            put(
+                "items",
+                JSONArray().apply {
+                    filtered.forEach { operation ->
+                        put(operation.toLogQueryJson())
+                    }
+                },
+            )
+            put("nextAfterSeq", filtered.lastOrNull()?.seq ?: (afterSeq ?: 0L))
+        }.toString()
+    }
+
+    private fun buildStateSummaryJson(): String {
+        val snapshot = store.snapshot().value
+        val targetStates = store.targetStates().value
+        return JSONObject().apply {
+            put(
+                "summary",
+                JSONObject().apply {
+                    put(
+                        "appStateKeys",
+                        JSONArray().apply {
+                            snapshot.appState.entries.sortedBy { it.key }.forEach { (key, value) ->
+                                put(
+                                    JSONObject().apply {
+                                        put("key", key)
+                                        put("sample", value)
+                                    },
+                                )
+                            }
+                        },
+                    )
+                    put(
+                        "targetStateTargets",
+                        JSONArray().apply {
+                            targetStates.keys.sorted().forEach(::put)
+                        },
+                    )
+                },
+            )
+        }.toString()
+    }
+
+    private fun buildStateQueryJson(queryParams: Parameters): String {
+        val keys = queryParams.csvValues("keys").toSet()
+        val targetId = queryParams.singleValue("targetId")
+        val scope = queryParams.singleValue("scope") ?: "app"
+        val appState = store.snapshot().value.appState
+            .let { state -> if (keys.isEmpty()) state else state.filterKeys { it in keys } }
+        val targetState = targetId?.let { store.targetStates().value[it].orEmpty() }.orEmpty()
+        return JSONObject().apply {
+            if (scope == "app" || scope == "branch") {
+                put("appState", appState.toStringMapJsonObject())
+            }
+            if (scope == "target" || scope == "branch") {
+                put("targetState", targetState.toStringMapJsonObject())
+            }
+        }.toString()
+    }
+
+    private fun buildSnapshotSummaryJson(): String {
+        val snapshot = store.snapshot().value
+        val typeCounts = snapshot.nodes.groupingBy { it.type }.eachCount()
+        return JSONObject().apply {
+            put(
+                "summary",
+                JSONObject().apply {
+                    put("screen", snapshot.screenName)
+                    put("nodeCount", snapshot.nodes.size)
+                    put(
+                        "rootIds",
+                        JSONArray().apply {
+                            snapshot.nodes.filter { it.parentId == null }.map { it.id }.sorted().forEach(::put)
+                        },
+                    )
+                    put(
+                        "typeCounts",
+                        typeCounts.toIntMapJsonObject(),
+                    )
+                    put("clickableCount", snapshot.nodes.count { it.clickable })
+                },
+            )
+            put(
+                "fieldCatalog",
+                JSONArray().apply {
+                    allNodeFields.forEach(::put)
+                },
+            )
+            put(
+                "examples",
+                JSONArray().apply {
+                    listOf(
+                        "/snapshot?targetId=save_button&scope=self",
+                        "/snapshot?targetId=save_button&scope=branchToRoot&fields=id,type,text,bounds",
+                        "/snapshot?types=Button&clickable=true&limit=20",
+                    ).forEach(::put)
+                },
+            )
+        }.toString()
+    }
+
+    private fun buildSnapshotQueryJson(queryParams: Parameters): String {
+        val query = parseSnapshotQuery(queryParams)
+        val snapshot = handler.querySnapshot(query)
+        val nodeFields = queryParams.csvValues("fields").toSet().ifEmpty { compactNodeFields }
+        val enabledFilter = queryParams.singleValue("enabled")?.toBooleanStrictOrNull()
+        val nodes = snapshot.nodes
+            .asSequence()
+            .filter { enabledFilter == null || it.enabled == enabledFilter }
+            .toList()
+        return JSONObject().apply {
+            put("screen", snapshot.screenName)
+            put(
+                "nodes",
+                JSONArray().apply {
+                    nodes.forEach { node ->
+                        put(node.toJsonObject(nodeFields))
+                    }
+                },
+            )
+        }.toString()
+    }
+
+    private fun buildIndexHtml(): String {
+        val snapshot = store.snapshot().value
+        val operations = store.operations().value.takeLast(10).reversed()
+        return """
+            <!doctype html>
+            <html lang="en">
+            <head>
+              <meta charset="utf-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <title>${escapeHtml(snapshot.appName)}</title>
+              <style>
+                body { font-family: sans-serif; padding: 20px; background: #f6f7f9; color: #222; }
+                .card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+                code, pre { background: #f0f2f5; border-radius: 8px; padding: 2px 6px; }
+                pre { padding: 12px; white-space: pre-wrap; word-break: break-word; }
+                a { color: #1677ff; text-decoration: none; }
+                ul { padding-left: 20px; }
+              </style>
+            </head>
+            <body>
+              <div class="card">
+                <h1>${escapeHtml(snapshot.appName)}</h1>
+                <p>screen=${escapeHtml(snapshot.screenName)} nodeCount=${snapshot.nodes.size} logCount=${store.operations().value.size}</p>
+                <p><a href="/help">/help</a> · <a href="/action">/action</a> · <a href="/logs">/logs</a> · <a href="/state">/state</a> · <a href="/snapshot">/snapshot</a></p>
+              </div>
+              <div class="card">
+                <h2>Recent Logs</h2>
+                <pre>${escapeHtml(JSONArray().apply { operations.forEach { put(it.toLogQueryJson()) } }.toString(2))}</pre>
+              </div>
+            </body>
+            </html>
+        """.trimIndent()
+    }
+
+    private fun buildActionTargets(): List<DebugActionTarget> {
+        val snapshot = store.snapshot().value
+        val nodeById = snapshot.nodes.associateBy { it.id }
+        return handler.actionTargets()
+            .map { target ->
+                val node = nodeById[target.targetId]
+                target.copy(
+                    targetType = target.targetType ?: node?.type,
+                    screenName = target.screenName ?: snapshot.screenName,
+                )
+            }
+            .sortedBy { it.targetId }
     }
 
     private fun parseActionRequest(body: String): DebugActionRequest {
@@ -270,86 +526,48 @@ class DebugHttpServer(
         )
     }
 
-    private fun readJsonObject(body: String): JSONObject? {
-        if (body.isBlank()) {
-            return null
+    private fun parseSnapshotQuery(queryParams: Parameters): DebugSnapshotQuery {
+        val targetId = queryParams.singleValue("targetId")
+        val scope = queryParams.singleValue("scope")
+        val depth = queryParams.singleValue("depth")?.toIntOrNull()
+        val descendantDepth = when (scope) {
+            "children" -> depth ?: 1
+            "subtree" -> depth ?: 32
+            else -> 0
         }
-        return runCatching { JSONObject(body) }.getOrNull()
-    }
-
-    private fun buildIndexHtml(
-        snapshot: DebugSnapshot,
-        operations: List<DebugOperation>,
-    ): String {
-        val prettySnapshot = JSONObject(snapshot.toJsonString(DebugSnapshotQuery())).toString(2)
-        val prettyOperations = JSONObject(operationsLogToJsonString(operations.reversed())).toString(2)
-        return """
-            <!doctype html>
-            <html lang="en">
-            <head>
-              <meta charset="utf-8" />
-              <meta name="viewport" content="width=device-width, initial-scale=1" />
-              <title>${escapeHtml(snapshot.appName)}</title>
-              <style>
-                body { font-family: sans-serif; padding: 16px; background: #f7f7f7; }
-                pre { white-space: pre-wrap; word-break: break-word; background: #fff; padding: 12px; border-radius: 8px; }
-              </style>
-            </head>
-            <body>
-              <h1>${escapeHtml(snapshot.appName)}</h1>
-              <p>GET /snapshot、POST /snapshot/query、GET /operations、POST /action。</p>
-              <pre id="snapshot">${escapeHtml(prettySnapshot)}</pre>
-              <pre id="logs">${escapeHtml(prettyOperations)}</pre>
-            </body>
-            </html>
-        """.trimIndent()
-    }
-
-    private fun readString(
-        queryParams: Map<String, List<String>>,
-        bodyJson: JSONObject?,
-        key: String,
-    ): String? {
-        return queryParams.singleValue(key) ?: bodyJson.readNullableString(key)
-    }
-
-    private fun readBoolean(
-        queryParams: Map<String, List<String>>,
-        bodyJson: JSONObject?,
-        key: String,
-    ): Boolean? {
-        return queryParams.singleValue(key)?.toBooleanStrictOrNull()
-            ?: bodyJson?.takeIf { it.has(key) }?.optBoolean(key)
-    }
-
-    private fun readInt(
-        queryParams: Map<String, List<String>>,
-        bodyJson: JSONObject?,
-        key: String,
-    ): Int? {
-        return queryParams.singleValue(key)?.toIntOrNull()
-            ?: bodyJson?.takeIf { it.has(key) }?.optInt(key)
-    }
-
-    private fun readStringSet(
-        queryParams: Map<String, List<String>>,
-        bodyJson: JSONObject?,
-        key: String,
-    ): Set<String> {
-        val queryValues = queryParams[key].orEmpty().flatMap(::splitCsv)
-        if (queryValues.isNotEmpty()) {
-            return queryValues.toSet()
+        val includeAncestors = scope == "parent" || scope == "ancestors" || scope == "branchToRoot"
+        val ancestorDepth = when (scope) {
+            "parent" -> 1
+            "ancestors", "branchToRoot" -> depth
+            else -> null
         }
-        val rawArray = bodyJson?.optJSONArray(key) ?: return emptySet()
-        return buildSet {
-            repeat(rawArray.length()) { index ->
-                rawArray.optString(index)?.takeIf { it.isNotBlank() }?.let(::add)
-            }
-        }
+        val hasNodeScope = scope != null && scope != "all"
+        return DebugSnapshotQuery(
+            compact = true,
+            nodeFields = queryParams.csvValues("fields").toSet(),
+            nodeIds = targetId?.takeIf { hasNodeScope }?.let(::setOf).orEmpty(),
+            includeAncestors = includeAncestors,
+            ancestorDepth = ancestorDepth,
+            descendantDepth = descendantDepth,
+            visibleOnly = queryParams.singleValue("visible")?.toBooleanStrictOrNull() ?: false,
+            clickableOnly = queryParams.singleValue("clickable")?.toBooleanStrictOrNull() ?: false,
+            types = queryParams.csvValues("types").toSet(),
+            textQuery = queryParams.singleValue("textKeyword"),
+            limit = queryParams.singleValue("limit")?.toIntOrNull(),
+        )
     }
 
-    private fun Map<String, List<String>>.singleValue(key: String): String? {
-        return get(key)?.firstOrNull()?.takeIf { it.isNotBlank() }
+    private fun Parameters.hasEntries(): Boolean {
+        return names().isNotEmpty()
+    }
+
+    private fun Parameters.singleValue(key: String): String? {
+        return get(key)?.takeIf { it.isNotBlank() }
+    }
+
+    private fun Parameters.csvValues(key: String): List<String> {
+        return getAll(key).orEmpty()
+            .flatMap(::splitCsv)
     }
 
     private fun splitCsv(value: String): List<String> {
@@ -358,30 +576,206 @@ class DebugHttpServer(
             .filter { it.isNotBlank() }
     }
 
-    private fun decodeUrl(value: String): String {
-        return URLDecoder.decode(value, Charsets.UTF_8.name())
+    private fun operationLevel(operation: DebugOperation): String {
+        return operation.extra["level"]
+            ?: when {
+                operation.success == false -> "warn"
+                else -> "info"
+            }
     }
 
-    private fun String?.toBooleanStrictOrFalse(): Boolean {
-        return this?.toBooleanStrictOrNull() ?: false
+    private fun DebugOperation.matchesKeyword(keyword: String): Boolean {
+        return buildString {
+            append(action)
+            append(' ')
+            append(targetId.orEmpty())
+            append(' ')
+            append(targetText.orEmpty())
+            append(' ')
+            append(message.orEmpty())
+            append(' ')
+            append(text.orEmpty())
+            append(' ')
+            append(extra.entries.joinToString(" ") { "${it.key}=${it.value}" })
+        }.contains(keyword, ignoreCase = true)
+    }
+
+    private fun DebugActionTarget.toJsonObject(): JSONObject {
+        return JSONObject().apply {
+            put("targetId", targetId)
+            putOrNull("targetType", targetType)
+            putOrNull("screen", screenName)
+            put(
+                "actions",
+                JSONArray().apply {
+                    actions.forEach { action ->
+                        put(action.toJsonObject(targetId))
+                    }
+                },
+            )
+        }
+    }
+
+    private fun DebugActionSpec.toJsonObject(targetId: String): JSONObject {
+        return JSONObject().apply {
+            put("name", name)
+            put(
+                "args",
+                JSONArray().apply {
+                    args.forEach(::put)
+                },
+            )
+            putOrNull("summary", summary)
+            put(
+                "example",
+                JSONObject().apply {
+                    put("action", name)
+                    put("targetId", targetId)
+                },
+            )
+        }
+    }
+
+    private fun DebugOperation.toLogQueryJson(): JSONObject {
+        return JSONObject().apply {
+            put("seq", seq)
+            put("time", formatEpochMs(createdAtEpochMs))
+            put("source", source.wireValue)
+            put("level", operationLevel(this@toLogQueryJson))
+            put("event", action)
+            putOrNull("targetId", targetId)
+            putOrNull("summary", message)
+            put(
+                "data",
+                JSONObject().apply {
+                    extra.entries.sortedBy { it.key }.forEach { (key, value) ->
+                        put(key, value)
+                    }
+                    putOrNull("targetType", targetType)
+                    putOrNull("targetText", targetText)
+                    putOrNull("text", text)
+                    putOrNull("accepted", success?.toString())
+                },
+            )
+        }
+    }
+
+    private fun DebugActionResult.toHttpJsonString(request: DebugActionRequest): String {
+        return JSONObject().apply {
+            put("accepted", ok)
+            put("message", message)
+            put("action", request.action)
+            putOrNull("targetId", request.targetId)
+        }.toString()
+    }
+
+    private fun DebugNode.toJsonObject(nodeFields: Set<String>): JSONObject {
+        return JSONObject().apply {
+            if ("id" in nodeFields) put("id", id)
+            if ("parentId" in nodeFields) putOrNull("parentId", parentId)
+            if ("type" in nodeFields) put("type", type)
+            if ("text" in nodeFields) putOrNull("text", text)
+            if ("role" in nodeFields) putOrNull("role", role)
+            if ("backgroundColor" in nodeFields) putOrNull("backgroundColor", backgroundColor)
+            if ("contentColor" in nodeFields) putOrNull("contentColor", contentColor)
+            if ("visible" in nodeFields) put("visible", visible)
+            if ("enabled" in nodeFields) put("enabled", enabled)
+            if ("clickable" in nodeFields) put("clickable", clickable)
+            if ("value" in nodeFields) putOrNull("value", value)
+            if ("extra" in nodeFields) put("extra", extra.toStringMapJsonObject())
+            if ("bounds" in nodeFields) {
+                put("bounds", bounds?.toJsonObject() ?: JSONObject.NULL)
+            }
+        }
+    }
+
+    private fun DebugBounds.toJsonObject(): JSONObject {
+        return JSONObject()
+            .put("left", left)
+            .put("top", top)
+            .put("width", width)
+            .put("height", height)
+    }
+
+    private fun Map<String, Int>.toIntMapJsonObject(): JSONObject {
+        return JSONObject().apply {
+            entries.sortedBy { it.key }.forEach { (key, value) ->
+                put(key, value)
+            }
+        }
+    }
+
+    private fun Map<String, String>.toStringMapJsonObject(): JSONObject {
+        return JSONObject().apply {
+            entries.sortedBy { it.key }.forEach { (key, value) ->
+                put(key, value)
+            }
+        }
+    }
+
+    private fun JSONObject?.readNullableString(key: String): String? {
+        if (this == null || !has(key) || isNull(key)) {
+            return null
+        }
+        return optString(key).takeIf { it.isNotBlank() }
+    }
+
+    private fun JSONObject?.readNullableDouble(key: String): Double? {
+        if (this == null || !has(key) || isNull(key)) {
+            return null
+        }
+        return optDouble(key)
+    }
+
+    private fun readJsonObject(body: String): JSONObject? {
+        if (body.isBlank()) {
+            return null
+        }
+        return runCatching { JSONObject(body) }.getOrNull()
+    }
+
+    private fun JSONObject.putOrNull(
+        key: String,
+        value: Any?,
+    ): JSONObject {
+        return put(key, value ?: JSONObject.NULL)
+    }
+
+    private fun nowAsWireTime(): String {
+        return formatEpochMs(System.currentTimeMillis())
+    }
+
+    private fun formatEpochMs(epochMs: Long): String {
+        return wireTimeFormatter.format(
+            Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()),
+        )
+    }
+
+    private fun parseWireTime(value: String): Long? {
+        return runCatching {
+            LocalDateTime.parse(value, wireTimeFormatter)
+                .atZone(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
+        }.getOrNull()
+    }
+
+    private fun escapeHtml(value: String): String {
+        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     }
 }
 
-private val allSnapshotFields = linkedSetOf(
-    "appName",
-    "screenName",
-    "componentCount",
-    "serverHost",
-    "serverPort",
-    "updatedAtEpochMs",
-    "appState",
-    "nodes",
-)
-
-private val compactSnapshotFields = linkedSetOf(
-    "screenName",
-    "updatedAtEpochMs",
-    "nodes",
+private val compactNodeFields = linkedSetOf(
+    "id",
+    "parentId",
+    "type",
+    "text",
+    "role",
+    "visible",
+    "enabled",
+    "clickable",
+    "value",
+    "bounds",
 )
 
 private val allNodeFields = linkedSetOf(
@@ -400,236 +794,4 @@ private val allNodeFields = linkedSetOf(
     "bounds",
 )
 
-private val compactNodeFields = linkedSetOf(
-    "id",
-    "parentId",
-    "type",
-    "text",
-    "role",
-    "visible",
-    "enabled",
-    "clickable",
-    "value",
-    "bounds",
-)
-
-private fun DebugSnapshot.toJsonString(query: DebugSnapshotQuery): String {
-    return toJsonObject(query).toString()
-}
-
-private fun DebugSnapshot.toJsonObject(query: DebugSnapshotQuery): JSONObject {
-    val snapshotFields = query.resolveSnapshotFields()
-    val nodeFields = query.resolveNodeFields()
-    return JSONObject().apply {
-        if ("appName" in snapshotFields) put("appName", appName)
-        if ("screenName" in snapshotFields) put("screenName", screenName)
-        if ("componentCount" in snapshotFields) put("componentCount", componentCount)
-        if ("serverHost" in snapshotFields) put("serverHost", serverHost)
-        if ("serverPort" in snapshotFields) put("serverPort", serverPort)
-        if ("updatedAtEpochMs" in snapshotFields) put("updatedAtEpochMs", updatedAtEpochMs)
-        if ("appState" in snapshotFields) put("appState", appState.toJsonObject())
-        if ("nodes" in snapshotFields) {
-            put(
-                "nodes",
-                JSONArray().apply {
-                    nodes.forEach { node ->
-                        put(node.toJsonObject(nodeFields))
-                    }
-                },
-            )
-        }
-    }
-}
-
-private fun DebugSnapshotQuery.resolveSnapshotFields(): Set<String> {
-    if (snapshotFields.isNotEmpty()) {
-        return snapshotFields
-    }
-    if (!compact) {
-        return allSnapshotFields
-    }
-    return linkedSetOf<String>().apply {
-        add("screenName")
-        add("updatedAtEpochMs")
-        if (shouldIncludeAppStateByDefault()) {
-            add("appState")
-        }
-        if (shouldIncludeNodesByDefault()) {
-            add("nodes")
-        }
-    }
-}
-
-private fun DebugSnapshotQuery.resolveNodeFields(): Set<String> {
-    if (nodeFields.isNotEmpty()) {
-        return nodeFields
-    }
-    return if (compact) compactNodeFields else allNodeFields
-}
-
-private fun DebugSnapshotQuery.shouldIncludeAppStateByDefault(): Boolean {
-    return appStateKeys.isNotEmpty()
-}
-
-private fun DebugSnapshotQuery.shouldIncludeNodesByDefault(): Boolean {
-    return !shouldIncludeAppStateByDefault() || hasNodeFilter()
-}
-
-private fun DebugSnapshotQuery.hasNodeFilter(): Boolean {
-    return nodeIds.isNotEmpty() ||
-        includeAncestors ||
-        ancestorDepth != null ||
-        descendantDepth > 0 ||
-        visibleOnly ||
-        clickableOnly ||
-        types.isNotEmpty() ||
-        !textQuery.isNullOrBlank() ||
-        limit != null
-}
-
-private fun Map<String, String>.toJsonObject(): JSONObject {
-    return JSONObject().apply {
-        entries.sortedBy { it.key }.forEach { (key, value) ->
-            put(key, value)
-        }
-    }
-}
-
-private fun DebugNode.toJsonObject(nodeFields: Set<String>): JSONObject {
-    return JSONObject().apply {
-        if ("id" in nodeFields) put("id", id)
-        if ("parentId" in nodeFields) putOrNull("parentId", parentId)
-        if ("type" in nodeFields) put("type", type)
-        if ("text" in nodeFields) putOrNull("text", text)
-        if ("role" in nodeFields) putOrNull("role", role)
-        if ("backgroundColor" in nodeFields) putOrNull("backgroundColor", backgroundColor)
-        if ("contentColor" in nodeFields) putOrNull("contentColor", contentColor)
-        if ("visible" in nodeFields) put("visible", visible)
-        if ("enabled" in nodeFields) put("enabled", enabled)
-        if ("clickable" in nodeFields) put("clickable", clickable)
-        if ("value" in nodeFields) putOrNull("value", value)
-        if ("extra" in nodeFields) put("extra", extra.toJsonObject())
-        if ("bounds" in nodeFields) {
-            put(
-                "bounds",
-                bounds?.toJsonObject() ?: JSONObject.NULL,
-            )
-        }
-    }
-}
-
-private fun DebugBounds.toJsonObject(): JSONObject {
-    return JSONObject()
-        .put("left", left)
-        .put("top", top)
-        .put("width", width)
-        .put("height", height)
-}
-
-private fun DebugActionResult.toJsonString(): String {
-    return JSONObject()
-        .put("ok", ok)
-        .put("message", message)
-        .toString()
-}
-
-private fun DebugOperationsResult.toJsonString(query: DebugOperationsQuery): String {
-    return JSONObject().apply {
-        if (query.groupBySource) {
-            put("humanItems", items.filter { it.source == DebugOperationSource.HUMAN }.toJsonArray())
-            put("aiItems", items.filter { it.source == DebugOperationSource.AI }.toJsonArray())
-        } else {
-            put("items", items.toJsonArray())
-        }
-        put("nextAfterSeq", nextAfterSeq)
-        put("remainingCount", remainingCount)
-    }.toString()
-}
-
-private fun List<DebugOperation>.toJsonArray(): JSONArray {
-    return JSONArray().apply {
-        forEach { operation ->
-            put(operation.toJsonObject())
-        }
-    }
-}
-
-private fun DebugOperation.toJsonObject(): JSONObject {
-    return JSONObject().apply {
-        put("seq", seq)
-        put("source", source.wireValue)
-        put("action", action)
-        putOrNull("targetId", targetId)
-        putOrNull("targetParentId", targetParentId)
-        putOrNull("targetType", targetType)
-        putOrNull("targetText", targetText)
-        put("screenName", screenName)
-        putOrNull("text", text)
-        putOrNull("dx", dx)
-        putOrNull("dy", dy)
-        putOrNull("success", success)
-        putOrNull("message", message)
-        put("extra", extra.toJsonObject())
-        put("createdAtEpochMs", createdAtEpochMs)
-    }
-}
-
-private fun operationsLogToJsonString(operations: List<DebugOperation>): String {
-    return JSONObject().apply {
-        put(
-            "items",
-            JSONArray().apply {
-                operations.forEach { operation ->
-                    put(operation.toLogLine())
-                }
-            },
-        )
-    }.toString()
-}
-
-private fun DebugOperation.toLogLine(): String {
-    return buildString {
-        append(seq)
-        append(" | ")
-        append(source.wireValue)
-        append(" | ")
-        append(action)
-        targetId?.let {
-            append(" target=")
-            append(it)
-        }
-        success?.let {
-            append(" ok=")
-            append(it)
-        }
-        message?.takeIf { it.isNotBlank() }?.let {
-            append(" msg=")
-            append(it)
-        }
-    }
-}
-
-private fun JSONObject.putOrNull(
-    key: String,
-    value: Any?,
-): JSONObject {
-    return put(key, value ?: JSONObject.NULL)
-}
-
-private fun JSONObject?.readNullableString(key: String): String? {
-    if (this == null || !has(key) || isNull(key)) {
-        return null
-    }
-    return optString(key).takeIf { it.isNotBlank() }
-}
-
-private fun JSONObject?.readNullableDouble(key: String): Double? {
-    if (this == null || !has(key) || isNull(key)) {
-        return null
-    }
-    return optDouble(key)
-}
-
-private fun escapeHtml(value: String): String {
-    return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-}
+private val wireTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")

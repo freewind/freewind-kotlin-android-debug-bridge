@@ -41,6 +41,19 @@ data class DebugSnapshot(
     val nodes: List<DebugNode>,
 )
 
+data class DebugActionSpec(
+    val name: String,
+    val args: List<String> = emptyList(),
+    val summary: String? = null,
+)
+
+data class DebugActionTarget(
+    val targetId: String,
+    val targetType: String? = null,
+    val screenName: String? = null,
+    val actions: List<DebugActionSpec> = emptyList(),
+)
+
 // 动作请求。
 data class DebugActionRequest(
     val action: String,

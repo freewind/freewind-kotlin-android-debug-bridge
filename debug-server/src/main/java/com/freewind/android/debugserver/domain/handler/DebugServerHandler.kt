@@ -2,6 +2,7 @@ package com.freewind.android.debugserver.domain.handler
 
 import com.freewind.android.debugserver.domain.models.DebugActionRequest
 import com.freewind.android.debugserver.domain.models.DebugActionResult
+import com.freewind.android.debugserver.domain.models.DebugActionTarget
 import com.freewind.android.debugserver.domain.models.DebugNode
 import com.freewind.android.debugserver.domain.models.DebugOperationSource
 import com.freewind.android.debugserver.domain.models.DebugOperationsQuery
@@ -72,5 +73,9 @@ class DebugServerHandler(
 
     fun queryOperations(query: DebugOperationsQuery): DebugOperationsResult {
         return store.queryOperations(query)
+    }
+
+    fun actionTargets(): List<DebugActionTarget> {
+        return actionBus.targets()
     }
 }

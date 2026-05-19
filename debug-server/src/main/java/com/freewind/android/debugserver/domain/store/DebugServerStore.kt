@@ -34,10 +34,13 @@ class DebugServerStore(
     )
 
     private val operationState = MutableStateFlow<List<DebugOperation>>(emptyList())
+    private val targetStateState = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
 
     fun snapshot(): StateFlow<DebugSnapshot> = snapshotState.asStateFlow()
 
     fun operations(): StateFlow<List<DebugOperation>> = operationState.asStateFlow()
+
+    fun targetStates(): StateFlow<Map<String, Map<String, String>>> = targetStateState.asStateFlow()
 
     fun updateSnapshot(
         screenName: String,
@@ -90,6 +93,21 @@ class DebugServerStore(
             nextOperationSeq += 1
             operationState.value = (operationState.value + operation).takeLast(200)
             operation
+        }
+    }
+
+    fun clearOperations() {
+        synchronized(lock) {
+            operationState.value = emptyList()
+        }
+    }
+
+    fun updateTargetState(
+        targetId: String,
+        state: Map<String, String>,
+    ) {
+        synchronized(lock) {
+            targetStateState.value = targetStateState.value + (targetId to state.toSortedMap())
         }
     }
 

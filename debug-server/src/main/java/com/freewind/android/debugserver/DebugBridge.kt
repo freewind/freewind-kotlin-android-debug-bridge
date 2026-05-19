@@ -1,8 +1,10 @@
 package com.freewind.android.debugserver
 
 import com.freewind.android.debugserver.domain.handler.DebugServerHandler
+import com.freewind.android.debugserver.domain.models.DebugActionSpec
 import com.freewind.android.debugserver.domain.models.DebugActionRequest
 import com.freewind.android.debugserver.domain.models.DebugActionResult
+import com.freewind.android.debugserver.domain.models.DebugActionTarget
 import com.freewind.android.debugserver.domain.models.DebugNode
 import com.freewind.android.debugserver.domain.store.DebugServerStore
 import com.freewind.android.debugserver.infra.persistence.DebugHttpServer
@@ -48,6 +50,16 @@ class DebugBridge(
             screenName = screenName,
             appState = appState,
             nodes = nodes,
+        )
+    }
+
+    fun publishTargetState(
+        targetId: String,
+        state: Map<String, String>,
+    ) {
+        store.updateTargetState(
+            targetId = targetId,
+            state = state,
         )
     }
 
@@ -181,9 +193,20 @@ class DebugBridge(
 
     fun registerAction(
         targetId: String,
+        targetType: String? = null,
+        screenName: String? = null,
+        actions: List<DebugActionSpec> = emptyList(),
         action: suspend (DebugActionRequest) -> DebugActionResult,
     ) {
-        actionBus.registerAction(targetId, action)
+        actionBus.registerAction(
+            target = DebugActionTarget(
+                targetId = targetId,
+                targetType = targetType,
+                screenName = screenName,
+                actions = actions,
+            ),
+            action = action,
+        )
     }
 
     fun unregisterAction(targetId: String) {

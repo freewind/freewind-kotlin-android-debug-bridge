@@ -30,6 +30,7 @@ HTTP 接口：
 - `GET /help`
 - `GET /action`
 - `GET /logs`
+- `DELETE /logs`
 - `GET /state`
 - `GET /snapshot`
 - `POST /action`
@@ -231,6 +232,7 @@ http://127.0.0.1:8765
 - `GET /`：返回给人看的可视化页
 - `GET /help`：返回动态全量 help，只给结构、能力、字段、示例，不给大数据
 - `GET /action`、`GET /logs`、`GET /state`、`GET /snapshot`：默认返回该资源当前时刻的 summary
+- `DELETE /logs`：清空当前内存里的全部日志
 - 子路径带 query：才返回具体数据
 - `POST /action`：唯一执行入口
 
@@ -316,13 +318,18 @@ http://127.0.0.1:8765
       "method": "POST",
       "path": "/action",
       "summary": "trigger one concrete action",
-      "bodyFields": ["action", "targetId", "text", "dx", "dy", "args"]
+      "bodyFields": ["action", "targetId", "text", "dx", "dy"]
     },
     {
       "method": "GET",
       "path": "/logs",
       "summary": "show log summary or query matching logs",
       "queryFields": ["event", "level", "source", "targetId", "screen", "from", "to", "limit", "keyword"]
+    },
+    {
+      "method": "DELETE",
+      "path": "/logs",
+      "summary": "delete all existing logs"
     },
     {
       "method": "GET",
@@ -428,7 +435,6 @@ body 字段：
 - `text`
 - `dx`
 - `dy`
-- `args`
 
 示例：
 
@@ -493,8 +499,7 @@ curl -X POST "http://127.0.0.1:8765/action" \
     },
     "sourceCounts": {
       "human": 40,
-      "ai": 28,
-      "system": 60
+      "ai": 28
     },
     "eventCountsTop": {
       "click": 22,
@@ -502,6 +507,22 @@ curl -X POST "http://127.0.0.1:8765/action" \
       "request_fail": 4
     }
   }
+}
+```
+
+### `DELETE /logs`
+
+用途：
+
+- 清空当前进程内内存日志
+- 方便 AI 从新一轮操作开始录制
+
+返回示例：
+
+```json
+{
+  "ok": true,
+  "deletedCount": 128
 }
 ```
 
