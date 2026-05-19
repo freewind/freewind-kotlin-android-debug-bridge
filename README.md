@@ -27,7 +27,7 @@
 HTTP 接口：
 
 - `GET /`
-- `GET /web`
+- `GET /help`
 - `GET /action`
 - `GET /logs`
 - `GET /state`
@@ -104,7 +104,7 @@ fun DemoScreen(
         when (request.action) {
             "click" -> {
                 handler.onSaveClick()
-                DebugActionResult(true, "saved")
+                DebugActionResult(true, "accepted")
             }
             else -> DebugActionResult(false, "unsupported")
         }
@@ -197,7 +197,7 @@ curl http://127.0.0.1:8765/snapshot
 
 ```bash
 curl "http://127.0.0.1:8765/"
-curl "http://127.0.0.1:8765/web"
+curl "http://127.0.0.1:8765/help"
 curl "http://127.0.0.1:8765/action"
 curl "http://127.0.0.1:8765/logs"
 curl "http://127.0.0.1:8765/state"
@@ -214,6 +214,12 @@ curl "http://127.0.0.1:8765/snapshot?targetId=save_button&scope=branchToRoot&fie
 
 ## 面向 AI 的对外协议
 
+这一节是目标协议规范。
+
+- 先把语义写死，便于别的 AI/别的技术栈照着实现
+- 当前代码未必已全部实现到位
+- 但后续实现应尽量向这里收敛
+
 基址：
 
 ```text
@@ -222,8 +228,8 @@ http://127.0.0.1:8765
 
 总原则：
 
-- `GET /`：返回动态全量 help，只给结构、能力、字段、示例，不给大数据
-- `GET /web`：返回可视化调试端
+- `GET /`：返回给人看的可视化页
+- `GET /help`：返回动态全量 help，只给结构、能力、字段、示例，不给大数据
 - `GET /action`、`GET /logs`、`GET /state`、`GET /snapshot`：默认返回该资源当前时刻的 summary
 - 子路径带 query：才返回具体数据
 - `POST /action`：唯一执行入口
@@ -232,8 +238,32 @@ http://127.0.0.1:8765
 
 用途：
 
+- 给人直接打开看
+- 返回可视化调试页
+- 页面里展示概览与入口，不直接承载 AI 协议
+
+返回应包含：
+
+- `text/html`
+- 前端静态资源入口页
+
+返回示例：
+
+```html
+<!doctype html>
+<html>
+  <head>...</head>
+  <body>debug console</body>
+</html>
+```
+
+### `GET /help`
+
+用途：
+
 - AI 第一次接入时先看这里
 - 返回当前时刻动态组装的全量 help
+- 只返回结构性信息，不返回大量业务数据
 - 告诉 AI：当前有哪些能力、有哪些 endpoint、每个 endpoint 支持哪些 query、建议先怎么查
 
 返回应包含：
@@ -268,8 +298,13 @@ http://127.0.0.1:8765
   "endpoints": [
     {
       "method": "GET",
-      "path": "/web",
-      "summary": "show web debug console built with react + antd + typescript"
+      "path": "/",
+      "summary": "open human-readable debug console"
+    },
+    {
+      "method": "GET",
+      "path": "/help",
+      "summary": "return dynamic full help for AI"
     },
     {
       "method": "GET",
@@ -303,35 +338,13 @@ http://127.0.0.1:8765
     }
   ],
   "examples": [
-    "GET /web",
+    "GET /help",
     "GET /logs",
     "GET /snapshot?targetId=save_button&scope=branchToRoot&fields=id,type,text,bounds",
     "POST /action {\"action\":\"click\",\"targetId\":\"save_button\"}"
   ]
 }
 ```
-
-### `GET /web`
-
-用途：
-
-- 返回一个可视化调试端
-- 技术栈：React + Ant Design + TypeScript
-- 给人直接打开看
-
-建议页面能力：
-
-- 左侧 endpoints/help 导航
-- action 列表与触发面板
-- logs summary + query
-- state summary + query
-- snapshot tree + node detail
-- 常用 query 一键填充
-
-默认返回：
-
-- `text/html`
-- 前端静态资源入口页
 
 ### `GET /action`
 
@@ -389,10 +402,7 @@ debugBridge.registerComposeAction(
             handler.onSaveClick()
             DebugActionResult(true, "accepted")
         }
-        else -> DebugActionResult(
-            false,
-            "unsupported action=${request.action} targetId=${request.targetId}",
-        )
+        else -> DebugActionResult(false, "unsupported")
     }
 }
 ```
@@ -401,7 +411,7 @@ debugBridge.registerComposeAction(
 
 - `DebugActionResult` 只表达“这个 action req 是否被接受/拒绝”
 - 真正业务结果、失败原因、补充日志，放到 `handler` 内部自己记录
-- `message` 尽量写成可排查文案，不要只写 `unsupported`
+- `message` 保持短小即可，比如 `accepted` / `unsupported`
 
 ### `POST /action`
 
@@ -713,19 +723,106 @@ AI 能否查到/操作到，取决于你有没有先把信息接进来：
   - 用 `debugBridge.log(...)`
   - `ScrollState` / `LazyListState` 可直接挂 `RecordScrollState/RecordLazyListScroll`
 
-## 当前实现与目标协议
+## 实现任务清单
 
-当前代码里仍有一些兼容接口：
+下面这组任务，是别的技术栈也应尽量对齐的最小实现顺序。
 
-- `GET /operations`
-- `GET /logs`
-- `GET /snapshot`
-- `POST /snapshot/query`
+### P0. 文档对齐
+
+- 先按本 README 固定协议语义
+- 不要先自由发挥接口名
+- 不要先做 UI，再反推协议
+
+### P1. 人类页
+
+- `GET /` 返回 HTML
+- 给人看，不是给 AI 协议消费
+- 至少放：
+  - 当前 app/screen 概览
+  - `/help` 入口
+  - `action/logs/state/snapshot` 入口
+
+### P2. 动态全量 help
+
+- `GET /help` 返回 JSON
+- 内容动态组装
+- 只放结构/能力/字段/示例，不放大数据
+- 至少含：
+  - `appName`
+  - `screenName`
+  - `serverTime`
+  - `capabilities`
+  - `counts`
+  - `endpoints`
+  - `examples`
+
+### P3. 动作协议
+
+- `GET /action`
+  - 默认返回当前可执行 target/action summary
 - `POST /action`
+  - 真执行
+- 必须打通：
+  - `targetId -> handler`
+  - handler 接收 `action/text/dx/dy/args`
+  - action req 自动留一条 `source=ai` log
 
-README 这里描述的是更适合 AI 的目标对外协议：
+### P4. 日志协议
 
-- `GET /`：动态全量 help
-- `GET /action|logs|state|snapshot`：默认 summary
-- 带 query：返回细节
-- `POST /action`：执行
+- `GET /logs`
+  - 无 query：返回 summary
+  - 有 query：返回匹配 items
+- 至少支持：
+  - `event`
+  - `level`
+  - `source`
+  - `targetId`
+  - `screen`
+  - `from`
+  - `to`
+  - `limit`
+  - `keyword`
+
+### P5. 状态协议
+
+- `GET /state`
+  - 无 query：返回 state summary
+  - 有 query：返回具体 state
+- 至少支持：
+  - `keys`
+  - `targetId`
+  - `scope`
+- 业务代码必须显式 publish：
+  - `appState`
+  - 可选 `targetState`
+
+### P6. 快照协议
+
+- `GET /snapshot`
+  - 无 query：返回 snapshot summary
+  - 有 query：返回具体 node data
+- 至少支持：
+  - `targetId`
+  - `scope`
+  - `depth`
+  - `types`
+  - `textKeyword`
+  - `fields`
+  - `limit`
+- UI 代码必须显式 publish：
+  - node register
+  - snapshot publish
+
+### P7. 完成标准
+
+- 人类先开 `GET /`
+- AI 先读 `GET /help`
+- AI 不读源码，也能从 `/help` 知道：
+  - 有哪些能力
+  - 哪些 query 能用
+  - 哪些字段会出现
+  - 下一步该查哪里
+- `GET /action|logs|state|snapshot` 无 query 都能返回 summary
+- 加 query 后，都能稳定返回具体数据
+- `POST /action` 可驱动真实 handler
+- 所有关键行为都能通过 `logs/state/snapshot` 交叉验证
