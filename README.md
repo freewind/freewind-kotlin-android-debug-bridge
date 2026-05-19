@@ -204,6 +204,178 @@ curl "http://127.0.0.1:8765/snapshot?compact=false"
 
 动作语义由业务 app 自己定义。库只负责转发。
 
+## API 速查
+
+基址：
+
+```text
+http://127.0.0.1:8765
+```
+
+### `GET /`
+
+用途：浏览器里看当前 snapshot + 最近 20 条 operation。
+
+返回：`text/html`
+
+示例：
+
+```bash
+curl http://127.0.0.1:8765/
+```
+
+### `GET /snapshot`
+
+用途：按 query string 拉 snapshot。
+
+常见 query：
+
+- `compact=true|false`
+- `nodeIds=save_button,keyword_input`
+- `includeAncestors=true`
+- `ancestorDepth=1`
+- `descendantDepth=1`
+- `snapshotFields=screenName,updatedAtEpochMs,nodes`
+- `nodeFields=id,parentId,type,text,clickable,bounds`
+- `appStateKeys=route,count`
+- `visibleOnly=true`
+- `clickableOnly=true`
+- `types=Button,Text`
+- `textQuery=save`
+- `limit=20`
+
+示例：
+
+```bash
+curl "http://127.0.0.1:8765/snapshot?nodeIds=save_button&includeAncestors=true&ancestorDepth=1"
+```
+
+返回示例：
+
+```json
+{
+  "screenName": "DemoScreen",
+  "updatedAtEpochMs": 1747654321000,
+  "nodes": [
+    {
+      "id": "form_root",
+      "parentId": null,
+      "type": "Column",
+      "text": null,
+      "role": null,
+      "visible": true,
+      "enabled": true,
+      "clickable": false,
+      "value": null,
+      "bounds": {
+        "left": 0,
+        "top": 0,
+        "width": 1080,
+        "height": 2160
+      }
+    },
+    {
+      "id": "save_button",
+      "parentId": "form_root",
+      "type": "Button",
+      "text": "Save",
+      "role": "button",
+      "visible": true,
+      "enabled": true,
+      "clickable": true,
+      "value": null,
+      "bounds": {
+        "left": 48,
+        "top": 320,
+        "width": 220,
+        "height": 96
+      }
+    }
+  ]
+}
+```
+
+全量示例：
+
+```bash
+curl "http://127.0.0.1:8765/snapshot?compact=false&limit=1"
+```
+
+```json
+{
+  "appName": "Your App",
+  "screenName": "DemoScreen",
+  "componentCount": 1,
+  "serverHost": "127.0.0.1",
+  "serverPort": 8765,
+  "updatedAtEpochMs": 1747654321000,
+  "appState": {
+    "count": "3",
+    "route": "demo"
+  },
+  "nodes": [
+    {
+      "id": "save_button",
+      "parentId": "form_root",
+      "type": "Button",
+      "text": "Save",
+      "role": "button",
+      "backgroundColor": "#FF6200EE",
+      "contentColor": "#FFFFFFFF",
+      "visible": true,
+      "enabled": true,
+      "clickable": true,
+      "value": null,
+      "extra": {
+        "variant": "primary"
+      },
+      "bounds": {
+        "left": 48,
+        "top": 320,
+        "width": 220,
+        "height": 96
+      }
+    }
+  ]
+}
+```
+
+### `POST /snapshot/query`
+
+用途：body 传复杂 query，避免长 URL。
+
+示例：
+
+```bash
+curl -X POST "http://127.0.0.1:8765/snapshot/query" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nodeIds": ["save_button"],
+    "includeAncestors": true,
+    "ancestorDepth": 1,
+    "snapshotFields": ["screenName", "updatedAtEpochMs", "nodes"],
+    "nodeFields": ["id", "parentId", "type", "text", "clickable", "bounds"]
+  }'
+```
+
+body 字段：
+
+- `compact`
+- `nodeIds`
+- `includeAncestors`
+- `ancestorDepth`
+- `descendantDepth`
+- `snapshotFields`
+- `nodeFields`
+- `appStateKeys`
+- `visibleOnly`
+- `clickableOnly`
+- `types`
+- `textQuery`
+- `limit`
+
+返回：同 `GET /snapshot`
+
 ## 操作历史协议
 
 `GET /operations` 支持：
@@ -230,6 +402,161 @@ curl "http://127.0.0.1:8765/snapshot?compact=false"
 - App 内用户点击/切换/输入/选择，优先用 `recordClick/recordToggle/recordTextInput/recordSelection`
 - `ScrollState` / `LazyListState` 直接挂 `RecordScrollState/RecordLazyListScroll`
 - 特殊场景再回退 `debugBridge.recordHumanOperation(...)`
+
+示例：
+
+```bash
+curl "http://127.0.0.1:8765/operations?afterSeq=12&limit=5&sources=human,ai"
+```
+
+返回示例：
+
+```json
+{
+  "items": [
+    {
+      "seq": 13,
+      "source": "human",
+      "action": "click",
+      "targetId": "save_button",
+      "targetParentId": "form_root",
+      "targetType": "Button",
+      "targetText": "Save",
+      "screenName": "DemoScreen",
+      "text": null,
+      "dx": null,
+      "dy": null,
+      "success": null,
+      "message": null,
+      "extra": {},
+      "createdAtEpochMs": 1747654321000
+    },
+    {
+      "seq": 14,
+      "source": "ai",
+      "action": "click",
+      "targetId": "save_button",
+      "targetParentId": "form_root",
+      "targetType": "Button",
+      "targetText": "Save",
+      "screenName": "DemoScreen",
+      "text": null,
+      "dx": null,
+      "dy": null,
+      "success": true,
+      "message": "saved",
+      "extra": {},
+      "createdAtEpochMs": 1747654325000
+    }
+  ],
+  "nextAfterSeq": 14,
+  "remainingCount": 0
+}
+```
+
+分组示例：
+
+```bash
+curl "http://127.0.0.1:8765/operations?afterSeq=0&limit=10&groupBySource=true"
+```
+
+```json
+{
+  "humanItems": [
+    {
+      "seq": 13,
+      "source": "human",
+      "action": "click",
+      "targetId": "save_button",
+      "targetParentId": "form_root",
+      "targetType": "Button",
+      "targetText": "Save",
+      "screenName": "DemoScreen",
+      "text": null,
+      "dx": null,
+      "dy": null,
+      "success": null,
+      "message": null,
+      "extra": {},
+      "createdAtEpochMs": 1747654321000
+    }
+  ],
+  "aiItems": [
+    {
+      "seq": 14,
+      "source": "ai",
+      "action": "click",
+      "targetId": "save_button",
+      "targetParentId": "form_root",
+      "targetType": "Button",
+      "targetText": "Save",
+      "screenName": "DemoScreen",
+      "text": null,
+      "dx": null,
+      "dy": null,
+      "success": true,
+      "message": "saved",
+      "extra": {},
+      "createdAtEpochMs": 1747654325000
+    }
+  ],
+  "nextAfterSeq": 14,
+  "remainingCount": 0
+}
+```
+
+### `GET /logs`
+
+用途：拿纯文本风格 operation log，给人快速扫。
+
+示例：
+
+```bash
+curl http://127.0.0.1:8765/logs
+```
+
+返回示例：
+
+```json
+{
+  "items": [
+    "13 | human | click target=save_button",
+    "14 | ai | click target=save_button ok=true msg=saved"
+  ]
+}
+```
+
+### `POST /action`
+
+用途：外部 AI 发动作给 app；库会转发给已注册 handler，并自动记一条 `source=ai` operation。
+
+示例：
+
+```bash
+curl -X POST "http://127.0.0.1:8765/action" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "click",
+    "targetId": "save_button"
+  }'
+```
+
+输入字段：
+
+- `action`：动作名，必传
+- `targetId`：目标节点 id，常用
+- `text`：输入/选择类动作的值
+- `dx`：横向位移
+- `dy`：纵向位移
+
+返回示例：
+
+```json
+{
+  "ok": true,
+  "message": "saved"
+}
+```
 
 ## 快照查询协议
 
