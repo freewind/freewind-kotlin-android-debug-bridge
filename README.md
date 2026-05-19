@@ -25,6 +25,8 @@ HTTP 接口：
 
 - `GET /`
 - `GET /snapshot`
+- `POST /snapshot/query`
+- `GET /operations`
 - `GET /logs`
 - `POST /action`
 
@@ -34,7 +36,7 @@ HTTP 接口：
 - screen 名
 - 组件数
 - appState
-- 每节点 `id/type/text/role/backgroundColor/contentColor/visible/enabled/clickable/value/extra/bounds`
+- 每节点 `id/parentId/type/text/role/backgroundColor/contentColor/visible/enabled/clickable/value/extra/bounds`
 
 ## 快速接入
 
@@ -105,10 +107,17 @@ fun DemoScreen(
     }
 
     Button(
-        onClick = handler::onSaveClick,
+        onClick = {
+            debugBridge.recordHumanOperation(
+                action = "click",
+                targetId = "save_button",
+            )
+            handler.onSaveClick()
+        },
         modifier = Modifier.debugNode(
             registry = registry,
             id = "save_button",
+            parentId = "form_root",
             type = "Button",
             text = "Save",
             role = "button",
@@ -125,6 +134,13 @@ fun DemoScreen(
 ```bash
 adb forward tcp:8765 tcp:8765
 curl http://127.0.0.1:8765/snapshot
+```
+
+更省 token 的例子：
+
+```bash
+curl "http://127.0.0.1:8765/operations?afterSeq=0&limit=10&groupBySource=true"
+curl "http://127.0.0.1:8765/snapshot?nodeIds=save_button&includeAncestors=true&snapshotFields=screenName,updatedAtEpochMs,nodes&nodeFields=id,parentId,type,text,clickable,bounds"
 ```
 
 ## 设计约束
@@ -154,3 +170,51 @@ curl http://127.0.0.1:8765/snapshot
 - `dy`
 
 动作语义由业务 app 自己定义。库只负责转发。
+
+## 操作历史协议
+
+`GET /operations` 支持：
+
+- `afterSeq`：游标，只拿更晚记录
+- `limit`：最多返回多少条
+- `consume=true`：取完即删，按队列用
+- `sources=human,ai`：只拿指定来源
+- `groupBySource=true`：返回 `humanItems` / `aiItems`
+
+每条 operation 会带：
+
+- `seq/source/action`
+- `targetId/targetParentId/targetType/targetText`
+- `screenName`
+- `text/dx/dy`
+- `success/message`
+- `extra`
+- `createdAtEpochMs`
+
+说明：
+
+- `POST /action` 触发的动作，自动记为 `source=ai`
+- App 内用户点击/滚动/输入，业务代码里调用 `debugBridge.recordHumanOperation(...)`
+
+## 快照查询协议
+
+`GET /snapshot` 与 `POST /snapshot/query` 都支持：
+
+- `nodeIds`：指定一个或多个节点
+- `includeAncestors=true`：把 parent 链一起带回
+- `ancestorDepth=2`：只往上拿 2 层；不传则到顶
+- `descendantDepth=1`：往下拿子树
+- `snapshotFields`：顶层字段白名单
+- `nodeFields`：节点字段白名单
+- `appStateKeys`：只拿指定状态字段
+- `visibleOnly=true`
+- `clickableOnly=true`
+- `types=Button,Text`
+- `textQuery=save`
+- `limit=20`
+
+建议 AI 流程：
+
+1. 先轮询 `/operations`
+2. 拿到 `targetId`
+3. 再按 `nodeIds + includeAncestors + 精简 fields` 拉局部快照

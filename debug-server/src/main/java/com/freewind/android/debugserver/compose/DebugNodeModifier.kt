@@ -19,6 +19,7 @@ import com.freewind.android.debugserver.domain.models.DebugNodeDraft
 fun Modifier.debugNode(
     registry: DebugNodeRegistry,
     id: String,
+    parentId: String? = null,
     type: String,
     text: String? = null,
     role: String? = null,
@@ -36,6 +37,7 @@ fun Modifier.debugNode(
         registry.upsert(
             DebugNodeDraft(
                 id = id,
+                parentId = parentId,
                 type = type,
                 text = text,
                 role = role,

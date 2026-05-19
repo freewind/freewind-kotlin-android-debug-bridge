@@ -51,6 +51,28 @@ class DebugBridge(
         )
     }
 
+    fun recordHumanOperation(
+        action: String,
+        targetId: String? = null,
+        text: String? = null,
+        dx: Float? = null,
+        dy: Float? = null,
+        success: Boolean? = null,
+        message: String? = null,
+        extra: Map<String, String> = emptyMap(),
+    ) {
+        handler.recordHumanOperation(
+            action = action,
+            targetId = targetId,
+            text = text,
+            dx = dx,
+            dy = dy,
+            success = success,
+            message = message,
+            extra = extra,
+        )
+    }
+
     suspend fun performAction(request: DebugActionRequest): DebugActionResult {
         return handler.performAction(request)
     }

@@ -3,6 +3,11 @@ package com.freewind.android.debugserver.domain.handler
 import com.freewind.android.debugserver.domain.models.DebugActionRequest
 import com.freewind.android.debugserver.domain.models.DebugActionResult
 import com.freewind.android.debugserver.domain.models.DebugNode
+import com.freewind.android.debugserver.domain.models.DebugOperationSource
+import com.freewind.android.debugserver.domain.models.DebugOperationsQuery
+import com.freewind.android.debugserver.domain.models.DebugOperationsResult
+import com.freewind.android.debugserver.domain.models.DebugSnapshot
+import com.freewind.android.debugserver.domain.models.DebugSnapshotQuery
 import com.freewind.android.debugserver.domain.store.DebugServerStore
 import com.freewind.android.debugserver.infra.system.DebugActionBus
 
@@ -23,26 +28,49 @@ class DebugServerHandler(
         )
     }
 
+    fun recordHumanOperation(
+        action: String,
+        targetId: String? = null,
+        text: String? = null,
+        dx: Float? = null,
+        dy: Float? = null,
+        success: Boolean? = null,
+        message: String? = null,
+        extra: Map<String, String> = emptyMap(),
+    ) {
+        store.recordOperation(
+            source = DebugOperationSource.HUMAN,
+            action = action,
+            targetId = targetId,
+            text = text,
+            dx = dx,
+            dy = dy,
+            success = success,
+            message = message,
+            extra = extra,
+        )
+    }
+
     suspend fun performAction(request: DebugActionRequest): DebugActionResult {
         val result = actionBus.dispatch(request)
-        store.appendActionLog(
-            requestSummary = buildString {
-                append(request.action)
-                append(" target=")
-                append(request.targetId)
-                request.text?.let {
-                    append(" text=")
-                    append(it)
-                }
-                if (request.dx != null || request.dy != null) {
-                    append(" delta=")
-                    append(request.dx ?: 0f)
-                    append(",")
-                    append(request.dy ?: 0f)
-                }
-            },
-            result = result,
+        store.recordOperation(
+            source = DebugOperationSource.AI,
+            action = request.action,
+            targetId = request.targetId,
+            text = request.text,
+            dx = request.dx,
+            dy = request.dy,
+            success = result.ok,
+            message = result.message,
         )
         return result
+    }
+
+    fun querySnapshot(query: DebugSnapshotQuery): DebugSnapshot {
+        return store.querySnapshot(query)
+    }
+
+    fun queryOperations(query: DebugOperationsQuery): DebugOperationsResult {
+        return store.queryOperations(query)
     }
 }

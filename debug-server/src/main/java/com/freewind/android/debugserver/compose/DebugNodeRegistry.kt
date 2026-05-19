@@ -32,6 +32,7 @@ class DebugNodeRegistry {
         return nodes.values.map { draft ->
             DebugNode(
                 id = draft.id,
+                parentId = draft.parentId,
                 type = draft.type,
                 text = draft.text,
                 role = draft.role,
