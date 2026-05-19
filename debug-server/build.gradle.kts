@@ -34,6 +34,7 @@ dependencies {
     api("androidx.core:core-ktx:1.15.0")
     api("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     api(composeBom)
+    api("androidx.compose.foundation:foundation")
     api("androidx.compose.ui:ui")
     api("androidx.compose.ui:ui-tooling-preview")
 

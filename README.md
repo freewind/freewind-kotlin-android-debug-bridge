@@ -20,6 +20,12 @@
 - `Modifier.debugNode(...)`
 - `DebugBridge.PublishComposeSnapshot(...)`
 - `DebugBridge.RegisterDebugAction(...)`
+- `DebugBridge.recordClick(...)`
+- `DebugBridge.recordToggle(...)`
+- `DebugBridge.recordTextInput(...)`
+- `DebugBridge.recordSelection(...)`
+- `DebugBridge.RecordScrollState(...)`
+- `DebugBridge.RecordLazyListScroll(...)`
 
 HTTP 接口：
 
@@ -107,13 +113,10 @@ fun DemoScreen(
     }
 
     Button(
-        onClick = {
-            debugBridge.recordHumanOperation(
-                action = "click",
-                targetId = "save_button",
-            )
-            handler.onSaveClick()
-        },
+        onClick = debugBridge.recordClick(
+            targetId = "save_button",
+            onClick = handler::onSaveClick,
+        ),
         modifier = Modifier.debugNode(
             registry = registry,
             id = "save_button",
@@ -127,6 +130,32 @@ fun DemoScreen(
         Text("Save")
     }
 }
+```
+
+常见低侵入写法：
+
+```kotlin
+Switch(
+    checked = uiState.enabled,
+    onCheckedChange = debugBridge.recordToggle(
+        targetId = "enabled_switch",
+        onToggle = handler::onEnabledChange,
+    ),
+)
+
+TextField(
+    value = uiState.keyword,
+    onValueChange = debugBridge.recordTextInput(
+        targetId = "keyword_input",
+        onValueChange = handler::onKeywordChange,
+    ),
+)
+
+val scrollState = rememberScrollState()
+debugBridge.RecordScrollState(
+    targetId = "detail_scroll",
+    state = scrollState,
+)
 ```
 
 ### 4. 用 adb 转发访问
@@ -194,7 +223,9 @@ curl "http://127.0.0.1:8765/snapshot?nodeIds=save_button&includeAncestors=true&s
 说明：
 
 - `POST /action` 触发的动作，自动记为 `source=ai`
-- App 内用户点击/滚动/输入，业务代码里调用 `debugBridge.recordHumanOperation(...)`
+- App 内用户点击/切换/输入/选择，优先用 `recordClick/recordToggle/recordTextInput/recordSelection`
+- `ScrollState` / `LazyListState` 直接挂 `RecordScrollState/RecordLazyListScroll`
+- 特殊场景再回退 `debugBridge.recordHumanOperation(...)`
 
 ## 快照查询协议
 
