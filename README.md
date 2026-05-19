@@ -23,6 +23,14 @@
 - `DebugBridge`
 - `DebugNodeRegistry`
 - `Modifier.debugNode(...)`
+- `Modifier.debugTextNode(...)`
+- `Modifier.debugButtonNode(...)`
+- `Modifier.debugSwitchNode(...)`
+- `Modifier.debugTextFieldNode(...)`
+- `Modifier.debugCardNode(...)`
+- `Modifier.debugColumnNode(...)`
+- `Modifier.debugRowNode(...)`
+- `Modifier.debugLazyColumnNode(...)`
 - `DebugBridge.publishComposeSnapshot(...)`
 - `DebugBridge.registerComposeAction(...)`
 - `DebugBridge.log(...)`
@@ -184,6 +192,53 @@ debugBridge.RecordScrollState(
     state = scrollState,
 )
 ```
+
+推荐优先用类型化 node 方法：
+
+```kotlin
+Text(
+    text = "Title",
+    modifier = Modifier.debugTextNode(
+        registry = registry,
+        id = "title_text",
+        parentId = "screen_root",
+        text = "Title",
+    ),
+)
+
+Button(
+    onClick = handler::onSaveClick,
+    modifier = Modifier.debugButtonNode(
+        registry = registry,
+        id = "save_button",
+        parentId = "button_row",
+        text = "Save",
+    ),
+) {
+    Text("Save")
+}
+
+OutlinedTextField(
+    value = uiState.keyword,
+    onValueChange = handler::onKeywordChange,
+    label = { Text("Keyword") },
+    modifier = Modifier.debugTextFieldNode(
+        registry = registry,
+        id = "keyword_input",
+        parentId = "form_root",
+        value = uiState.keyword,
+        labelText = "Keyword",
+    ),
+)
+```
+
+这些方法会在对应类型上把关键字段写死：
+
+- `debugButtonNode(...)`：固定 `type=Button`、`role=button`、`clickable=true`
+- `debugSwitchNode(...)`：固定 `type=Switch`、`role=switch`、`value=checked`
+- `debugTextFieldNode(...)`：固定 `type=TextField`、`role=input`、`value=value`
+- `debugLazyColumnNode(...)`：固定 `type=LazyColumn`、`role=list`、`extra.itemCount`
+- `debugTextNode(...)`：要求显式给 `text`
 
 说明：
 

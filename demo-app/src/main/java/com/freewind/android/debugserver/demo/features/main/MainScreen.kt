@@ -26,7 +26,14 @@ import androidx.compose.ui.unit.dp
 import com.freewind.android.debugserver.DebugBridge
 import com.freewind.android.debugserver.compose.DebugNodeRegistry
 import com.freewind.android.debugserver.compose.RecordLazyListScroll
-import com.freewind.android.debugserver.compose.debugNode
+import com.freewind.android.debugserver.compose.debugButtonNode
+import com.freewind.android.debugserver.compose.debugCardNode
+import com.freewind.android.debugserver.compose.debugColumnNode
+import com.freewind.android.debugserver.compose.debugLazyColumnNode
+import com.freewind.android.debugserver.compose.debugRowNode
+import com.freewind.android.debugserver.compose.debugSwitchNode
+import com.freewind.android.debugserver.compose.debugTextFieldNode
+import com.freewind.android.debugserver.compose.debugTextNode
 import com.freewind.android.debugserver.compose.publishComposeSnapshot
 import com.freewind.android.debugserver.compose.registerComposeAction
 import com.freewind.android.debugserver.demo.domain.handler.DemoHandler
@@ -148,21 +155,19 @@ fun MainScreen(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
-            .debugNode(
+            .debugColumnNode(
                 registry = registry,
                 id = "screen_root",
-                type = "Column",
             ),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text(
             text = "Debug Server Demo",
             style = MaterialTheme.typography.headlineMedium,
-            modifier = Modifier.debugNode(
+            modifier = Modifier.debugTextNode(
                 registry = registry,
                 id = "title_text",
                 parentId = "screen_root",
-                type = "Text",
                 text = "Debug Server Demo",
             ),
         )
@@ -170,11 +175,10 @@ fun MainScreen(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .debugNode(
+                .debugCardNode(
                     registry = registry,
                     id = "control_card",
                     parentId = "screen_root",
-                    type = "Card",
                 ),
         ) {
             Column(
@@ -184,11 +188,10 @@ fun MainScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .debugNode(
+                        .debugRowNode(
                             registry = registry,
                             id = "switch_row",
                             parentId = "control_card",
-                            type = "Row",
                         ),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
@@ -206,15 +209,12 @@ fun MainScreen(
                             )
                             handler.onEnabledChange(checked)
                         },
-                        modifier = Modifier.debugNode(
+                        modifier = Modifier.debugSwitchNode(
                             registry = registry,
                             id = "enabled_switch",
                             parentId = "switch_row",
-                            type = "Switch",
-                            role = "switch",
-                            enabled = true,
-                            clickable = true,
-                            value = uiState.enabled.toString(),
+                            checked = uiState.enabled,
+                            labelText = "Enable feature",
                         ),
                     )
                 }
@@ -236,16 +236,12 @@ fun MainScreen(
                     label = { Text("Keyword") },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .debugNode(
+                        .debugTextFieldNode(
                             registry = registry,
                             id = "keyword_input",
                             parentId = "control_card",
-                            type = "TextField",
-                            text = uiState.keyword,
-                            role = "input",
-                            enabled = true,
-                            clickable = true,
                             value = uiState.keyword,
+                            labelText = "Keyword",
                         ),
                 )
 
@@ -253,11 +249,10 @@ fun MainScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .debugNode(
+                        .debugRowNode(
                             registry = registry,
                             id = "button_row",
                             parentId = "control_card",
-                            type = "Row",
                         ),
                 ) {
                     Button(
@@ -273,16 +268,13 @@ fun MainScreen(
                             )
                             handler.onSaveClick()
                         },
-                        modifier = Modifier.debugNode(
+                        modifier = Modifier.debugButtonNode(
                             registry = registry,
                             id = "save_button",
                             parentId = "button_row",
-                            type = "Button",
                             text = "Save",
-                            role = "button",
                             backgroundColor = MaterialTheme.colorScheme.primary,
                             contentColor = Color.White,
-                            clickable = true,
                         ),
                     ) {
                         Text("Save")
@@ -297,14 +289,11 @@ fun MainScreen(
                             )
                             handler.onResetClick()
                         },
-                        modifier = Modifier.debugNode(
+                        modifier = Modifier.debugButtonNode(
                             registry = registry,
                             id = "reset_button",
                             parentId = "button_row",
-                            type = "Button",
                             text = "Reset",
-                            role = "button",
-                            clickable = true,
                         ),
                     ) {
                         Text("Reset")
@@ -316,11 +305,10 @@ fun MainScreen(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .debugNode(
+                .debugCardNode(
                     registry = registry,
                     id = "status_card",
                     parentId = "screen_root",
-                    type = "Card",
                 ),
         ) {
             Column(
@@ -329,21 +317,19 @@ fun MainScreen(
             ) {
                 Text(
                     text = "Status: ${uiState.status}",
-                    modifier = Modifier.debugNode(
+                    modifier = Modifier.debugTextNode(
                         registry = registry,
                         id = "status_text",
                         parentId = "status_card",
-                        type = "Text",
                         text = uiState.status,
                     ),
                 )
                 Text(
                     text = "Save count: ${uiState.saveCount}",
-                    modifier = Modifier.debugNode(
+                    modifier = Modifier.debugTextNode(
                         registry = registry,
                         id = "save_count_text",
                         parentId = "status_card",
-                        type = "Text",
                         text = uiState.saveCount.toString(),
                     ),
                 )
@@ -354,11 +340,10 @@ fun MainScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .debugNode(
+                .debugCardNode(
                     registry = registry,
                     id = "event_card",
                     parentId = "screen_root",
-                    type = "Card",
                 ),
         ) {
             LazyColumn(
@@ -366,12 +351,11 @@ fun MainScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(16.dp)
-                    .debugNode(
+                    .debugLazyColumnNode(
                         registry = registry,
                         id = "event_list",
+                        itemCount = uiState.events.size,
                         parentId = "event_card",
-                        type = "LazyColumn",
-                        role = "list",
                     ),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -382,11 +366,10 @@ fun MainScreen(
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .debugNode(
+                            .debugCardNode(
                                 registry = registry,
                                 id = "event_item_${item.id}",
                                 parentId = "event_list",
-                                type = "Card",
                                 text = item.label,
                                 extra = mapOf(
                                     "eventId" to item.id.toString(),
