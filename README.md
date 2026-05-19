@@ -18,12 +18,9 @@
 - `DebugBridge`
 - `DebugNodeRegistry`
 - `Modifier.debugNode(...)`
-- `DebugBridge.PublishComposeSnapshot(...)`
-- `DebugBridge.RegisterDebugAction(...)`
-- `DebugBridge.recordClick(...)`
-- `DebugBridge.recordToggle(...)`
-- `DebugBridge.recordTextInput(...)`
-- `DebugBridge.recordSelection(...)`
+- `DebugBridge.publishComposeSnapshot(...)`
+- `DebugBridge.registerComposeAction(...)`
+- `DebugBridge.log(...)`
 - `DebugBridge.RecordScrollState(...)`
 - `DebugBridge.RecordLazyListScroll(...)`
 
@@ -90,7 +87,7 @@ fun DemoScreen(
     val registry = remember { DebugNodeRegistry() }
     val uiState by store.state.collectAsState()
 
-    debugBridge.PublishComposeSnapshot(
+    debugBridge.publishComposeSnapshot(
         registry = registry,
         screenName = "DemoScreen",
         appState = mapOf(
@@ -99,7 +96,7 @@ fun DemoScreen(
         ),
     )
 
-    debugBridge.RegisterDebugAction(
+    debugBridge.registerComposeAction(
         targetId = "save_button",
         registerKeys = arrayOf(uiState.count),
     ) { request ->
@@ -113,10 +110,18 @@ fun DemoScreen(
     }
 
     Button(
-        onClick = debugBridge.recordClick(
-            targetId = "save_button",
-            onClick = handler::onSaveClick,
-        ),
+        onClick = {
+            debugBridge.log(
+                event = "click",
+                targetId = "save_button",
+                data = mapOf(
+                    "screen" to "DemoScreen",
+                    "targetType" to "Button",
+                    "targetText" to "Save",
+                ),
+            )
+            handler.onSaveClick()
+        },
         modifier = Modifier.debugNode(
             registry = registry,
             id = "save_button",
@@ -132,23 +137,38 @@ fun DemoScreen(
 }
 ```
 
-常见低侵入写法：
+推荐显式写法：
 
 ```kotlin
 Switch(
     checked = uiState.enabled,
-    onCheckedChange = debugBridge.recordToggle(
-        targetId = "enabled_switch",
-        onToggle = handler::onEnabledChange,
-    ),
+    onCheckedChange = { checked ->
+        debugBridge.log(
+            event = "toggle",
+            targetId = "enabled_switch",
+            data = mapOf(
+                "screen" to "DemoScreen",
+                "checked" to checked.toString(),
+            ),
+        )
+        handler.onEnabledChange(checked)
+    },
 )
 
 TextField(
     value = uiState.keyword,
-    onValueChange = debugBridge.recordTextInput(
-        targetId = "keyword_input",
-        onValueChange = handler::onKeywordChange,
-    ),
+    onValueChange = { value ->
+        debugBridge.log(
+            event = "input",
+            targetId = "keyword_input",
+            data = mapOf(
+                "screen" to "DemoScreen",
+                "value" to value,
+                "length" to value.length.toString(),
+            ),
+        )
+        handler.onKeywordChange(value)
+    },
 )
 
 val scrollState = rememberScrollState()
@@ -157,6 +177,13 @@ debugBridge.RecordScrollState(
     state = scrollState,
 )
 ```
+
+说明：
+
+- `log(...)` 只负责记结构化事件
+- 原业务逻辑仍直接调用原 `handler`
+- `registerComposeAction(...)` 负责把 `targetId -> action handler` 暴露给 `POST /action`
+- 旧的 `recordClick/recordToggle/recordTextInput/...` 仍保留，但已不推荐
 
 ### 4. 用 adb 转发访问
 
@@ -203,6 +230,22 @@ curl "http://127.0.0.1:8765/snapshot?compact=false"
 - `dy`
 
 动作语义由业务 app 自己定义。库只负责转发。
+
+本地代码里通常这样注册：
+
+```kotlin
+debugBridge.registerComposeAction(
+    targetId = "save_button",
+) { request ->
+    when (request.action) {
+        "click" -> {
+            handler.onSaveClick()
+            DebugActionResult(true, "saved")
+        }
+        else -> DebugActionResult(false, "unsupported")
+    }
+}
+```
 
 ## API 速查
 
@@ -399,7 +442,7 @@ body 字段：
 说明：
 
 - `POST /action` 触发的动作，自动记为 `source=ai`
-- App 内用户点击/切换/输入/选择，优先用 `recordClick/recordToggle/recordTextInput/recordSelection`
+- App 内用户点击/切换/输入/选择，优先用 `log(...)`
 - `ScrollState` / `LazyListState` 直接挂 `RecordScrollState/RecordLazyListScroll`
 - 特殊场景再回退 `debugBridge.recordHumanOperation(...)`
 

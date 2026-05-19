@@ -8,7 +8,7 @@ import com.freewind.android.debugserver.domain.models.DebugActionResult
 
 // 在 Compose 里注册动作。
 @Composable
-fun DebugBridge.RegisterDebugAction(
+fun DebugBridge.registerComposeAction(
     targetId: String,
     registerKeys: Array<out Any?> = emptyArray(),
     action: suspend (DebugActionRequest) -> DebugActionResult,
@@ -22,4 +22,18 @@ fun DebugBridge.RegisterDebugAction(
             unregisterAction(targetId)
         }
     }
+}
+
+@Deprecated("Prefer registerComposeAction(...).")
+@Composable
+fun DebugBridge.RegisterDebugAction(
+    targetId: String,
+    registerKeys: Array<out Any?> = emptyArray(),
+    action: suspend (DebugActionRequest) -> DebugActionResult,
+) {
+    registerComposeAction(
+        targetId = targetId,
+        registerKeys = registerKeys,
+        action = action,
+    )
 }

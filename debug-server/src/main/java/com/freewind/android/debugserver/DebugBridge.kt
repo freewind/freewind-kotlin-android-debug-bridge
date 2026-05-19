@@ -73,6 +73,24 @@ class DebugBridge(
         )
     }
 
+    fun log(
+        event: String,
+        targetId: String? = null,
+        level: String = "info",
+        summary: String? = null,
+        data: Map<String, String> = emptyMap(),
+    ) {
+        recordHumanOperation(
+            action = event,
+            targetId = targetId,
+            message = summary,
+            extra = linkedMapOf(
+                "level" to level.ifBlank { "info" },
+            ) + data,
+        )
+    }
+
+    @Deprecated("Prefer explicit log(...) plus the original handler call.")
     fun recordClick(
         targetId: String,
         extra: Map<String, String> = emptyMap(),
@@ -88,6 +106,7 @@ class DebugBridge(
         }
     }
 
+    @Deprecated("Prefer explicit log(...) plus the original handler call.")
     fun recordPress(
         targetId: String,
         extra: Map<String, String> = emptyMap(),
@@ -103,6 +122,7 @@ class DebugBridge(
         }
     }
 
+    @Deprecated("Prefer explicit log(...) plus the original handler call.")
     fun recordToggle(
         targetId: String,
         extra: Map<String, String> = emptyMap(),
@@ -119,6 +139,7 @@ class DebugBridge(
         }
     }
 
+    @Deprecated("Prefer explicit log(...) plus the original handler call.")
     fun recordTextInput(
         targetId: String,
         extra: Map<String, String> = emptyMap(),
@@ -135,6 +156,7 @@ class DebugBridge(
         }
     }
 
+    @Deprecated("Prefer explicit log(...) plus the original handler call.")
     fun <T> recordSelection(
         targetId: String,
         action: String = "select",

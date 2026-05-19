@@ -7,7 +7,7 @@ import com.freewind.android.debugserver.infra.system.DebugActionBus
 
 // 把 registry 推到 bridge。
 @Composable
-fun DebugBridge.PublishComposeSnapshot(
+fun DebugBridge.publishComposeSnapshot(
     registry: DebugNodeRegistry,
     screenName: String,
     appState: Map<String, String> = emptyMap(),
@@ -19,6 +19,20 @@ fun DebugBridge.PublishComposeSnapshot(
             nodes = registry.snapshotNodes(),
         )
     }
+}
+
+@Deprecated("Prefer publishComposeSnapshot(...).")
+@Composable
+fun DebugBridge.PublishComposeSnapshot(
+    registry: DebugNodeRegistry,
+    screenName: String,
+    appState: Map<String, String> = emptyMap(),
+) {
+    publishComposeSnapshot(
+        registry = registry,
+        screenName = screenName,
+        appState = appState,
+    )
 }
 
 // 暴露 action bus，便于 UI 注册动作。
