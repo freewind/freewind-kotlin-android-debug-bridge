@@ -240,12 +240,21 @@ debugBridge.registerComposeAction(
     when (request.action) {
         "click" -> {
             handler.onSaveClick()
-            DebugActionResult(true, "saved")
+            DebugActionResult(true, "accepted")
         }
-        else -> DebugActionResult(false, "unsupported")
+        else -> DebugActionResult(
+            false,
+            "unsupported action=${request.action} targetId=${request.targetId}",
+        )
     }
 }
 ```
+
+这里建议：
+
+- `DebugActionResult` 只表达“这个 action req 是否被接受/拒绝”
+- 真正业务结果、失败原因、补充日志，放到 `handler.onSaveClick()` 内部自己记录
+- `message` 尽量写成可排查文案，不要只写 `unsupported`
 
 ## API 速查
 
