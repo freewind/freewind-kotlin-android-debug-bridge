@@ -169,7 +169,11 @@ curl http://127.0.0.1:8765/snapshot
 
 ```bash
 curl "http://127.0.0.1:8765/operations?afterSeq=0&limit=10&groupBySource=true"
+curl "http://127.0.0.1:8765/operations?afterSeq=0&limit=10&sources=human"
+curl "http://127.0.0.1:8765/snapshot?nodeIds=save_button"
+curl "http://127.0.0.1:8765/snapshot?nodeIds=save_button&includeAncestors=true&ancestorDepth=1"
 curl "http://127.0.0.1:8765/snapshot?nodeIds=save_button&includeAncestors=true&snapshotFields=screenName,updatedAtEpochMs,nodes&nodeFields=id,parentId,type,text,clickable,bounds"
+curl "http://127.0.0.1:8765/snapshot?compact=false"
 ```
 
 ## 设计约束
@@ -231,9 +235,14 @@ curl "http://127.0.0.1:8765/snapshot?nodeIds=save_button&includeAncestors=true&s
 
 `GET /snapshot` 与 `POST /snapshot/query` 都支持：
 
+- `compact=true`：默认值。返回精简字段，防 token 爆
+- `compact=false`：返回全量字段
 - `nodeIds`：指定一个或多个节点
+- `nodeIds=save_button`：只拿它自己
 - `includeAncestors=true`：把 parent 链一起带回
+- `includeAncestors=true&ancestorDepth=1`：拿自己 + parent
 - `ancestorDepth=2`：只往上拿 2 层；不传则到顶
+- `includeAncestors=true` 且不传 `ancestorDepth`：拿自己到 root 的整条分支
 - `descendantDepth=1`：往下拿子树
 - `snapshotFields`：顶层字段白名单
 - `nodeFields`：节点字段白名单
@@ -243,6 +252,26 @@ curl "http://127.0.0.1:8765/snapshot?nodeIds=save_button&includeAncestors=true&s
 - `types=Button,Text`
 - `textQuery=save`
 - `limit=20`
+
+默认 compact 顶层字段：
+
+- `screenName`
+- `updatedAtEpochMs`
+- `nodes`
+- 命中 `appStateKeys` 时，再附带 `appState`
+
+默认 compact 节点字段：
+
+- `id`
+- `parentId`
+- `type`
+- `text`
+- `role`
+- `visible`
+- `enabled`
+- `clickable`
+- `value`
+- `bounds`
 
 建议 AI 流程：
 

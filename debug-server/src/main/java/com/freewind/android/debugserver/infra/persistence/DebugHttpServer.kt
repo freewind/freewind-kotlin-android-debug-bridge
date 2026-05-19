@@ -228,6 +228,7 @@ class DebugHttpServer(
         val appStateKeys = readStringSet(queryParams, bodyJson, "appStateKeys")
         val nodeIds = readStringSet(queryParams, bodyJson, "nodeIds")
         return DebugSnapshotQuery(
+            compact = readBoolean(queryParams, bodyJson, "compact") ?: true,
             snapshotFields = snapshotFields,
             nodeFields = nodeFields,
             appStateKeys = appStateKeys,
@@ -417,16 +418,8 @@ private fun DebugSnapshot.toJsonString(query: DebugSnapshotQuery): String {
 }
 
 private fun DebugSnapshot.toJsonObject(query: DebugSnapshotQuery): JSONObject {
-    val snapshotFields = when {
-        query.snapshotFields.isNotEmpty() -> query.snapshotFields
-        query.usesCompactDefaults() -> compactSnapshotFields
-        else -> allSnapshotFields
-    }
-    val nodeFields = when {
-        query.nodeFields.isNotEmpty() -> query.nodeFields
-        query.usesCompactDefaults() -> compactNodeFields
-        else -> allNodeFields
-    }
+    val snapshotFields = query.resolveSnapshotFields()
+    val nodeFields = query.resolveNodeFields()
     return JSONObject().apply {
         if ("appName" in snapshotFields) put("appName", appName)
         if ("screenName" in snapshotFields) put("screenName", screenName)
@@ -448,11 +441,42 @@ private fun DebugSnapshot.toJsonObject(query: DebugSnapshotQuery): JSONObject {
     }
 }
 
-private fun DebugSnapshotQuery.usesCompactDefaults(): Boolean {
-    return snapshotFields.isNotEmpty() ||
-        nodeFields.isNotEmpty() ||
-        appStateKeys.isNotEmpty() ||
-        nodeIds.isNotEmpty() ||
+private fun DebugSnapshotQuery.resolveSnapshotFields(): Set<String> {
+    if (snapshotFields.isNotEmpty()) {
+        return snapshotFields
+    }
+    if (!compact) {
+        return allSnapshotFields
+    }
+    return linkedSetOf<String>().apply {
+        add("screenName")
+        add("updatedAtEpochMs")
+        if (shouldIncludeAppStateByDefault()) {
+            add("appState")
+        }
+        if (shouldIncludeNodesByDefault()) {
+            add("nodes")
+        }
+    }
+}
+
+private fun DebugSnapshotQuery.resolveNodeFields(): Set<String> {
+    if (nodeFields.isNotEmpty()) {
+        return nodeFields
+    }
+    return if (compact) compactNodeFields else allNodeFields
+}
+
+private fun DebugSnapshotQuery.shouldIncludeAppStateByDefault(): Boolean {
+    return appStateKeys.isNotEmpty()
+}
+
+private fun DebugSnapshotQuery.shouldIncludeNodesByDefault(): Boolean {
+    return !shouldIncludeAppStateByDefault() || hasNodeFilter()
+}
+
+private fun DebugSnapshotQuery.hasNodeFilter(): Boolean {
+    return nodeIds.isNotEmpty() ||
         includeAncestors ||
         ancestorDepth != null ||
         descendantDepth > 0 ||

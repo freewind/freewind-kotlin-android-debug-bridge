@@ -88,6 +88,7 @@ data class DebugOperation(
 )
 
 data class DebugSnapshotQuery(
+    val compact: Boolean = true,
     val snapshotFields: Set<String> = emptySet(),
     val nodeFields: Set<String> = emptySet(),
     val appStateKeys: Set<String> = emptySet(),
