@@ -9,9 +9,12 @@
     "sync-assets": "node ./scripts/sync-assets.mjs"
   },
   "dependencies": {
-    "antd": "^5.27.1",
+    "antd": "^6.4.3",
+    "freewind-antd-components": "github:freewind/freewind-antd-components#master",
+    "freewind-ts-utils": "github:freewind/freewind-ts-utils#master",
     "react": "18.2.0",
-    "react-dom": "18.2.0"
+    "react-dom": "18.2.0",
+    "react-json-view-lite": "^2.5.0"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",

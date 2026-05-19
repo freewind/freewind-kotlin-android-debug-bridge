@@ -2,14 +2,13 @@ import {
   App as AntdApp,
   Button,
   Card,
-  Col,
   Descriptions,
+  Flex,
   Form,
   Input,
   InputNumber,
   Layout,
   Modal,
-  Row,
   Select,
   Space,
   Statistic,
@@ -20,7 +19,8 @@ import {
   Typography,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import type { FC } from 'react'
+import { FloatLabel, JsonPreviewer } from 'freewind-antd-components'
+import type { FC, ReactNode } from 'react'
 import { startTransition, useEffect, useState } from 'react'
 import type {
   ActionResult,
@@ -379,8 +379,8 @@ const App: FC = () => {
       </Header>
       <Content style={{ padding: 24 }}>
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
-          <Row gutter={[16, 16]}>
-            <Col xs={24} md={6}>
+          <WrapGrid>
+            <GridItem mdBasis="calc(25% - 12px)">
               <Card>
                 <Statistic
                   title="Action Targets"
@@ -388,23 +388,23 @@ const App: FC = () => {
                   suffix={actionSummary?.summary.actionCount ? `/${actionSummary.summary.actionCount}` : ''}
                 />
               </Card>
-            </Col>
-            <Col xs={24} md={6}>
+            </GridItem>
+            <GridItem mdBasis="calc(25% - 12px)">
               <Card>
                 <Statistic title="Logs" value={logsSummary?.summary.total ?? 0} />
               </Card>
-            </Col>
-            <Col xs={24} md={6}>
+            </GridItem>
+            <GridItem mdBasis="calc(25% - 12px)">
               <Card>
                 <Statistic title="State Keys" value={help?.counts.stateKeyCount ?? 0} />
               </Card>
-            </Col>
-            <Col xs={24} md={6}>
+            </GridItem>
+            <GridItem mdBasis="calc(25% - 12px)">
               <Card>
                 <Statistic title="Snapshot Nodes" value={help?.counts.snapshotNodeCount ?? 0} />
               </Card>
-            </Col>
-          </Row>
+            </GridItem>
+          </WrapGrid>
 
           <Card>
             <Descriptions size="small" column={{ xs: 1, md: 3 }}>
@@ -461,23 +461,23 @@ const App: FC = () => {
                         </Space>
                       }
                     >
-                      <Row gutter={[16, 16]}>
-                        <Col xs={24} md={8}>
+                      <WrapGrid>
+                        <GridItem mdBasis="calc(33.333% - 11px)">
                           <Card size="small" title="Levels">
                             {renderCountTags(logsSummary?.summary.levelCounts)}
                           </Card>
-                        </Col>
-                        <Col xs={24} md={8}>
+                        </GridItem>
+                        <GridItem mdBasis="calc(33.333% - 11px)">
                           <Card size="small" title="Sources">
                             {renderCountTags(logsSummary?.summary.sourceCounts)}
                           </Card>
-                        </Col>
-                        <Col xs={24} md={8}>
+                        </GridItem>
+                        <GridItem mdBasis="calc(33.333% - 11px)">
                           <Card size="small" title="Top Events">
                             {renderCountTags(logsSummary?.summary.eventCountsTop)}
                           </Card>
-                        </Col>
-                      </Row>
+                        </GridItem>
+                      </WrapGrid>
                     </Card>
                     <Card title="Query">
                       <Form
@@ -486,13 +486,15 @@ const App: FC = () => {
                         initialValues={{ limit: 20 }}
                         onFinish={(values) => void queryLogs(values)}
                       >
-                        <Row gutter={[16, 0]}>
-                          <Col xs={24} md={6}>
-                            <Form.Item label="event" name="event">
-                              <Input />
+                        <WrapGrid>
+                          <GridItem mdBasis="calc(25% - 12px)">
+                            <Form.Item name="event">
+                              <FloatLabel label="event">
+                                <Input />
+                              </FloatLabel>
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={6}>
+                          </GridItem>
+                          <GridItem mdBasis="calc(25% - 12px)">
                             <Form.Item label="level" name="level">
                               <Select
                                 allowClear
@@ -502,8 +504,8 @@ const App: FC = () => {
                                 }))}
                               />
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={6}>
+                          </GridItem>
+                          <GridItem mdBasis="calc(25% - 12px)">
                             <Form.Item label="source" name="source">
                               <Select
                                 allowClear
@@ -513,38 +515,48 @@ const App: FC = () => {
                                 }))}
                               />
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={6}>
+                          </GridItem>
+                          <GridItem mdBasis="calc(25% - 12px)">
                             <Form.Item label="limit" name="limit">
                               <InputNumber min={1} max={200} style={{ width: '100%' }} />
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={6}>
-                            <Form.Item label="targetId" name="targetId">
-                              <Input />
+                          </GridItem>
+                          <GridItem mdBasis="calc(25% - 12px)">
+                            <Form.Item name="targetId">
+                              <FloatLabel label="targetId">
+                                <Input />
+                              </FloatLabel>
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={6}>
-                            <Form.Item label="screen" name="screen">
-                              <Input />
+                          </GridItem>
+                          <GridItem mdBasis="calc(25% - 12px)">
+                            <Form.Item name="screen">
+                              <FloatLabel label="screen">
+                                <Input />
+                              </FloatLabel>
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={6}>
-                            <Form.Item label="keyword" name="keyword">
-                              <Input />
+                          </GridItem>
+                          <GridItem mdBasis="calc(25% - 12px)">
+                            <Form.Item name="keyword">
+                              <FloatLabel label="keyword">
+                                <Input />
+                              </FloatLabel>
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={3}>
-                            <Form.Item label="from" name="from">
-                              <Input placeholder="20260519-223355" />
+                          </GridItem>
+                          <GridItem mdBasis="calc(12.5% - 14px)">
+                            <Form.Item name="from">
+                              <FloatLabel label="from">
+                                <Input placeholder="20260519-223355" />
+                              </FloatLabel>
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={3}>
-                            <Form.Item label="to" name="to">
-                              <Input placeholder="20260519-223355" />
+                          </GridItem>
+                          <GridItem mdBasis="calc(12.5% - 14px)">
+                            <Form.Item name="to">
+                              <FloatLabel label="to">
+                                <Input placeholder="20260519-223355" />
+                              </FloatLabel>
                             </Form.Item>
-                          </Col>
-                        </Row>
+                          </GridItem>
+                        </WrapGrid>
                         <Space>
                           <Button type="primary" htmlType="submit">
                             run query
@@ -591,18 +603,22 @@ const App: FC = () => {
                         initialValues={{ scope: 'app' }}
                         onFinish={(values) => void queryState(values)}
                       >
-                        <Row gutter={[16, 0]}>
-                          <Col xs={24} md={8}>
-                            <Form.Item label="keys(csv)" name="keys">
-                              <Input placeholder="route,count,keyword" />
+                        <WrapGrid>
+                          <GridItem mdBasis="calc(33.333% - 11px)">
+                            <Form.Item name="keys">
+                              <FloatLabel label="keys(csv)">
+                                <Input placeholder="route,count,keyword" />
+                              </FloatLabel>
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={8}>
-                            <Form.Item label="targetId" name="targetId">
-                              <Input />
+                          </GridItem>
+                          <GridItem mdBasis="calc(33.333% - 11px)">
+                            <Form.Item name="targetId">
+                              <FloatLabel label="targetId">
+                                <Input />
+                              </FloatLabel>
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={8}>
+                          </GridItem>
+                          <GridItem mdBasis="calc(33.333% - 11px)">
                             <Form.Item label="scope" name="scope">
                               <Select
                                 options={['app', 'target', 'branch'].map((value) => ({
@@ -611,8 +627,8 @@ const App: FC = () => {
                                 }))}
                               />
                             </Form.Item>
-                          </Col>
-                        </Row>
+                          </GridItem>
+                        </WrapGrid>
                         <Space>
                           <Button type="primary" htmlType="submit">
                             run query
@@ -659,13 +675,15 @@ const App: FC = () => {
                         }}
                         onFinish={(values) => void querySnapshot(values)}
                       >
-                        <Row gutter={[16, 0]}>
-                          <Col xs={24} md={6}>
-                            <Form.Item label="targetId" name="targetId">
-                              <Input />
+                        <WrapGrid>
+                          <GridItem mdBasis="calc(25% - 12px)">
+                            <Form.Item name="targetId">
+                              <FloatLabel label="targetId">
+                                <Input />
+                              </FloatLabel>
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={6}>
+                          </GridItem>
+                          <GridItem mdBasis="calc(25% - 12px)">
                             <Form.Item label="scope" name="scope">
                               <Select
                                 options={[
@@ -679,38 +697,44 @@ const App: FC = () => {
                                 ].map((value) => ({ label: value, value }))}
                               />
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={6}>
+                          </GridItem>
+                          <GridItem mdBasis="calc(25% - 12px)">
                             <Form.Item label="depth" name="depth">
                               <InputNumber min={1} style={{ width: '100%' }} />
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={6}>
+                          </GridItem>
+                          <GridItem mdBasis="calc(25% - 12px)">
                             <Form.Item label="limit" name="limit">
                               <InputNumber min={1} max={300} style={{ width: '100%' }} />
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={8}>
-                            <Form.Item label="types(csv)" name="types">
-                              <Input placeholder="Button,TextField" />
+                          </GridItem>
+                          <GridItem mdBasis="calc(33.333% - 11px)">
+                            <Form.Item name="types">
+                              <FloatLabel label="types(csv)">
+                                <Input placeholder="Button,TextField" />
+                              </FloatLabel>
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={8}>
-                            <Form.Item label="textKeyword" name="textKeyword">
-                              <Input />
+                          </GridItem>
+                          <GridItem mdBasis="calc(33.333% - 11px)">
+                            <Form.Item name="textKeyword">
+                              <FloatLabel label="textKeyword">
+                                <Input />
+                              </FloatLabel>
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={8}>
-                            <Form.Item label="fields(csv)" name="fields">
-                              <Input />
+                          </GridItem>
+                          <GridItem mdBasis="calc(33.333% - 11px)">
+                            <Form.Item name="fields">
+                              <FloatLabel label="fields(csv)">
+                                <Input />
+                              </FloatLabel>
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={4}>
+                          </GridItem>
+                          <GridItem mdBasis="calc(16.666% - 14px)">
                             <Form.Item label="visible" name="visible" valuePropName="checked">
                               <Switch />
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={4}>
+                          </GridItem>
+                          <GridItem mdBasis="calc(16.666% - 14px)">
                             <Form.Item
                               label="clickable"
                               name="clickable"
@@ -718,13 +742,13 @@ const App: FC = () => {
                             >
                               <Switch />
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={4}>
+                          </GridItem>
+                          <GridItem mdBasis="calc(16.666% - 14px)">
                             <Form.Item label="enabled" name="enabled" valuePropName="checked">
                               <Switch />
                             </Form.Item>
-                          </Col>
-                        </Row>
+                          </GridItem>
+                        </WrapGrid>
                         <Space>
                           <Button type="primary" htmlType="submit">
                             run query
@@ -777,22 +801,20 @@ const App: FC = () => {
         onOk={() => void actionForm.submit()}
       >
         <Form form={actionForm} layout="vertical" onFinish={(values) => void runAction(values, true)}>
-          <Form.Item
-            label="targetId"
-            name="targetId"
-            rules={[{ required: true, message: 'targetId required' }]}
-          >
-            <Input />
+          <Form.Item name="targetId" rules={[{ required: true, message: 'targetId required' }]}>
+            <FloatLabel label="targetId">
+              <Input />
+            </FloatLabel>
           </Form.Item>
-          <Form.Item
-            label="action"
-            name="action"
-            rules={[{ required: true, message: 'action required' }]}
-          >
-            <Input />
+          <Form.Item name="action" rules={[{ required: true, message: 'action required' }]}>
+            <FloatLabel label="action">
+              <Input />
+            </FloatLabel>
           </Form.Item>
-          <Form.Item label="text" name="text">
-            <Input />
+          <Form.Item name="text">
+            <FloatLabel label="text">
+              <Input />
+            </FloatLabel>
           </Form.Item>
           <Form.Item label="dx" name="dx">
             <InputNumber style={{ width: '100%' }} />
@@ -808,16 +830,11 @@ const App: FC = () => {
 
 const JsonBlock: FC<{ value: unknown }> = ({ value }) => {
   return (
-    <Typography.Paragraph
-      style={{
-        marginBottom: 0,
-        whiteSpace: 'pre-wrap',
-        wordBreak: 'break-word',
-        fontFamily: 'monospace',
-      }}
-    >
-      {JSON.stringify(value, null, 2)}
-    </Typography.Paragraph>
+    <JsonPreviewer
+      maxHeight={360}
+      style={{ marginBottom: 0 }}
+      value={value}
+    />
   )
 }
 
@@ -918,3 +935,31 @@ const toErrorMessage = (error: unknown) => {
 }
 
 export default App
+
+const WrapGrid: FC<{ children: ReactNode }> = ({ children }) => {
+  return (
+    <Flex
+      gap={16}
+      style={{ width: '100%' }}
+      wrap
+    >
+      {children}
+    </Flex>
+  )
+}
+
+const GridItem: FC<{
+  children: ReactNode
+  mdBasis: string
+}> = ({ children, mdBasis }) => {
+  return (
+    <div
+      style={{
+        flex: `1 1 ${mdBasis}`,
+        minWidth: 220,
+      }}
+    >
+      {children}
+    </div>
+  )
+}
