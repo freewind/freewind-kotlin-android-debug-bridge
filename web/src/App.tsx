@@ -39,7 +39,8 @@ import type {
 
 const { Header, Content } = Layout
 const pollIntervalMs = 4000
-const defaultSnapshotFields = 'id,parentId,type,text,role,visible,enabled,clickable,value,bounds'
+const defaultSnapshotFields =
+  'id,parentId,type,text,role,backgroundColor,contentColor,visible,enabled,clickable,value,extra,bounds'
 
 interface ActionPayload {
   action: string
@@ -78,6 +79,12 @@ interface SnapshotQueryForm {
   visible?: boolean
   clickable?: boolean
   enabled?: boolean
+}
+
+interface PreviewTreeNode {
+  children: PreviewTreeNode[]
+  key: string
+  node: SnapshotNode
 }
 
 const App: FC = () => {
@@ -253,6 +260,14 @@ const App: FC = () => {
       message.error(toErrorMessage(error))
     }
   }
+
+  useEffect(() => {
+    void querySnapshot({
+      fields: defaultSnapshotFields,
+      limit: 120,
+      scope: 'all',
+    })
+  }, [])
 
   const helpEndpointColumns: ColumnsType<HelpResponse['endpoints'][number]> = [
     { title: 'Method', dataIndex: 'method', width: 96, render: renderMethodTag },
@@ -758,6 +773,24 @@ const App: FC = () => {
                       </Form>
                     </Card>
                     <Card title="Query Result">
+                      <SnapshotPreview
+                        actionSummary={actionSummary}
+                        focusNode={(targetId) => {
+                          snapshotForm.setFieldsValue({
+                            fields: defaultSnapshotFields,
+                            scope: 'self',
+                            targetId,
+                          })
+                          stateForm.setFieldsValue({
+                            scope: 'target',
+                            targetId,
+                          })
+                        }}
+                        nodes={snapshotQueryResult?.nodes ?? []}
+                        onAction={(payload) => openActionModal(payload)}
+                      />
+                    </Card>
+                    <Card title="Query Result Table">
                       <Table
                         rowKey={(record, index) => record.id ?? String(index)}
                         columns={snapshotColumns}
@@ -835,6 +868,224 @@ const JsonBlock: FC<{ value: unknown }> = ({ value }) => {
       style={{ marginBottom: 0 }}
       value={value}
     />
+  )
+}
+
+const SnapshotPreview: FC<{
+  actionSummary: ActionSummaryResponse | null
+  focusNode: (targetId: string) => void
+  nodes: SnapshotNode[]
+  onAction: (payload: Partial<ActionPayload>) => void
+}> = ({ actionSummary, focusNode, nodes, onAction }) => {
+  if (nodes.length === 0) {
+    return (
+      <Typography.Text type="secondary">
+        no snapshot data yet
+      </Typography.Text>
+    )
+  }
+
+  const boundedNodes = nodes.filter((node) => node.bounds)
+  const useBoundsPreview = boundedNodes.length >= Math.max(2, Math.ceil(nodes.length / 2))
+  const actionMap = new Map(actionSummary?.items.map((item) => [item.targetId, item]) ?? [])
+
+  return (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Typography.Text type="secondary">
+        {useBoundsPreview
+          ? 'bounds preview'
+          : 'tree preview'}
+      </Typography.Text>
+      {useBoundsPreview ? (
+        <SnapshotBoundsPreview
+          actionMap={actionMap}
+          focusNode={focusNode}
+          nodes={boundedNodes}
+          onAction={onAction}
+        />
+      ) : (
+        <SnapshotTreePreview
+          actionMap={actionMap}
+          focusNode={focusNode}
+          nodes={nodes}
+          onAction={onAction}
+        />
+      )}
+    </Space>
+  )
+}
+
+const SnapshotBoundsPreview: FC<{
+  actionMap: Map<string, ActionTarget>
+  focusNode: (targetId: string) => void
+  nodes: SnapshotNode[]
+  onAction: (payload: Partial<ActionPayload>) => void
+}> = ({ actionMap, focusNode, nodes, onAction }) => {
+  const lefts = nodes.map((node) => node.bounds?.left ?? 0)
+  const tops = nodes.map((node) => node.bounds?.top ?? 0)
+  const rights = nodes.map((node) => (node.bounds?.left ?? 0) + (node.bounds?.width ?? 0))
+  const bottoms = nodes.map((node) => (node.bounds?.top ?? 0) + (node.bounds?.height ?? 0))
+  const minLeft = Math.min(...lefts)
+  const minTop = Math.min(...tops)
+  const sourceWidth = Math.max(...rights) - minLeft
+  const sourceHeight = Math.max(...bottoms) - minTop
+  const maxPreviewWidth = 760
+  const scale = Math.min(1, maxPreviewWidth / Math.max(sourceWidth, 1))
+
+  return (
+    <div style={{ overflowX: 'auto', paddingBottom: 8 }}>
+      <div
+        style={{
+          background: '#f5f5f5',
+          border: '1px solid #d9d9d9',
+          borderRadius: 12,
+          height: Math.max(sourceHeight * scale, 240),
+          position: 'relative',
+          width: Math.max(sourceWidth * scale, 320),
+        }}
+      >
+        {nodes.map((node, index) => {
+          const bounds = node.bounds
+          if (!bounds) {
+            return null
+          }
+          const actionTarget = node.id ? actionMap.get(node.id) : undefined
+          return (
+            <button
+              key={node.id ?? String(index)}
+              onClick={() => {
+                if (node.id) {
+                  focusNode(node.id)
+                }
+                if (node.id && actionTarget) {
+                  onAction({
+                    action: actionTarget.actions[0]?.name,
+                    targetId: node.id,
+                  })
+                }
+              }}
+              style={{
+                alignItems: 'flex-start',
+                background: node.backgroundColor || previewBackgroundColor(node.type),
+                border: node.clickable ? '2px solid #1677ff' : '1px solid #8c8c8c',
+                borderRadius: 8,
+                color: node.contentColor || '#111',
+                cursor: node.id ? 'pointer' : 'default',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 4,
+                left: (bounds.left - minLeft) * scale,
+                minHeight: Math.max(bounds.height * scale, 22),
+                overflow: 'hidden',
+                padding: 6,
+                position: 'absolute',
+                textAlign: 'left',
+                top: (bounds.top - minTop) * scale,
+                width: Math.max(bounds.width * scale, 64),
+              }}
+              type="button"
+            >
+              <span style={{ fontSize: 10, opacity: 0.7 }}>
+                {node.type}
+              </span>
+              <span style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.2 }}>
+                {previewNodeTitle(node)}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+const SnapshotTreePreview: FC<{
+  actionMap: Map<string, ActionTarget>
+  focusNode: (targetId: string) => void
+  nodes: SnapshotNode[]
+  onAction: (payload: Partial<ActionPayload>) => void
+}> = ({ actionMap, focusNode, nodes, onAction }) => {
+  const roots = buildPreviewTree(nodes)
+  return (
+    <Space direction="vertical" size="small" style={{ width: '100%' }}>
+      {roots.map((item) => (
+        <SnapshotTreeNodeView
+          actionMap={actionMap}
+          focusNode={focusNode}
+          key={item.key}
+          node={item}
+          onAction={onAction}
+        />
+      ))}
+    </Space>
+  )
+}
+
+const SnapshotTreeNodeView: FC<{
+  actionMap: Map<string, ActionTarget>
+  focusNode: (targetId: string) => void
+  node: PreviewTreeNode
+  onAction: (payload: Partial<ActionPayload>) => void
+}> = ({ actionMap, focusNode, node, onAction }) => {
+  const { children, key, node: current } = node
+  const actionTarget = current.id ? actionMap.get(current.id) : undefined
+  const currentId = current.id
+
+  return (
+    <div
+      key={key}
+      style={{
+        border: '1px solid #d9d9d9',
+        borderLeft: current.clickable ? '3px solid #1677ff' : '1px solid #d9d9d9',
+        borderRadius: 10,
+        padding: 12,
+      }}
+    >
+      <Flex align="center" gap={8} justify="space-between" wrap>
+        <Space size={6} wrap>
+          <Tag>{current.type ?? 'Unknown'}</Tag>
+          {current.role ? <Tag color="cyan">{current.role}</Tag> : null}
+          {current.id ? <Tag color="geekblue">{current.id}</Tag> : null}
+          <Typography.Text strong>{previewNodeTitle(current)}</Typography.Text>
+        </Space>
+        <Space size={6} wrap>
+          {currentId ? (
+            <Button size="small" onClick={() => focusNode(currentId)}>
+              focus
+            </Button>
+          ) : null}
+          {currentId && actionTarget ? (
+            <Button
+              size="small"
+              type="primary"
+              onClick={() =>
+                onAction({
+                  action: actionTarget.actions[0]?.name,
+                  targetId: currentId,
+                })
+              }
+            >
+              {actionTarget.actions[0]?.name ?? 'action'}
+            </Button>
+          ) : null}
+        </Space>
+      </Flex>
+      {children.length > 0 ? (
+        <div style={{ marginLeft: 16, marginTop: 12 }}>
+          <Space direction="vertical" size="small" style={{ width: '100%' }}>
+            {children.map((child) => (
+              <SnapshotTreeNodeView
+                actionMap={actionMap}
+                focusNode={focusNode}
+                key={child.key}
+                node={child}
+                onAction={onAction}
+              />
+            ))}
+          </Space>
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -935,6 +1186,58 @@ const toErrorMessage = (error: unknown) => {
 }
 
 export default App
+
+const buildPreviewTree = (nodes: SnapshotNode[]): PreviewTreeNode[] => {
+  const items = nodes.map((node, index) => ({
+    children: [] as PreviewTreeNode[],
+    key: node.id ?? `node-${index}`,
+    node,
+  }))
+  const byId = new Map(items.map((item) => [item.node.id, item] as const))
+  const roots: PreviewTreeNode[] = []
+
+  items.forEach((item) => {
+    const parentId = item.node.parentId
+    if (!parentId) {
+      roots.push(item)
+      return
+    }
+    const parent = byId.get(parentId)
+    if (!parent) {
+      roots.push(item)
+      return
+    }
+    parent.children.push(item)
+  })
+
+  return roots
+}
+
+const previewNodeTitle = (node: SnapshotNode) => {
+  return (
+    node.text ||
+    node.value ||
+    node.extra?.label ||
+    node.id ||
+    node.type ||
+    'node'
+  )
+}
+
+const previewBackgroundColor = (type?: string) => {
+  switch (type) {
+    case 'Button':
+      return '#e6f4ff'
+    case 'TextField':
+      return '#ffffff'
+    case 'Switch':
+      return '#f6ffed'
+    case 'Card':
+      return '#fafafa'
+    default:
+      return '#f5f5f5'
+  }
+}
 
 const WrapGrid: FC<{ children: ReactNode }> = ({ children }) => {
   return (
