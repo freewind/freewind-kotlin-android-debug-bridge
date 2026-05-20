@@ -1,3 +1,5 @@
+// 这里只描述 HTTP 协议 JSON，不描述内部 domain model。
+// 后端字段若变，优先同步这里，再看 App.tsx 与 README。
 export type HelpResponse = {
   appName: string
   screenName: string
@@ -81,6 +83,7 @@ export type LogsResponse = {
 }
 
 export type LogsClearResponse = {
+  // 新字段给 web / AI 用；旧字段保留兼容历史调用方。
   accepted: boolean
   message: string
   clearedCount: number

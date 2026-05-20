@@ -60,6 +60,8 @@ const commonSelectProps = {
   style: compactSelectStyle,
 }
 const snapshotPreviewFallbackWidth = 520
+// 这是 web 预览默认字段集。
+// 若后端默认字段或命名变化，先改这里，再验证 snapshot preview / tree / table。
 const snapshotPreviewFields = [
   'id',
   'parentId',

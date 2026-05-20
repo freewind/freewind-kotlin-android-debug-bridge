@@ -16,6 +16,7 @@ export function buildQuery(values: Record<string, unknown>): string {
       return
     }
     if (Array.isArray(rawValue)) {
+      // 后端 Parameters.csvValues() 走逗号分隔，别改成 repeated query keys。
       const values = rawValue
         .map((value) => String(value).trim())
         .filter(Boolean)

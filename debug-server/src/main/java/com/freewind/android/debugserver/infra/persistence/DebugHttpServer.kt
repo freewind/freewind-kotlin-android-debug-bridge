@@ -108,6 +108,11 @@ class DebugHttpServer(
                 val deletedCount = store.operations().value.size
                 store.clearOperations()
                 call.respondText(
+                    // 这里是 web console 与外部 AI 共用协议。
+                    // 若字段改名/删字段，必须同步：
+                    // 1. web/src/types.ts
+                    // 2. README 的接口示例
+                    // 3. pnpm build 与 gradlew assemble
                     JSONObject().apply {
                         put("accepted", true)
                         put("message", "cleared")
@@ -500,6 +505,7 @@ class DebugHttpServer(
     private fun parseActionRequest(body: String): DebugActionRequest {
         val json = readJsonObject(body)
         return DebugActionRequest(
+            // /action 的可写字段要与 /help 里的 bodyFields、README、web/src/types.ts 同步。
             action = json?.optString("action").orEmpty(),
             targetId = json.readNullableString("targetId"),
             text = json.readNullableString("text"),
