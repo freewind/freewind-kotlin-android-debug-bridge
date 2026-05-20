@@ -10,6 +10,8 @@ import java.util.concurrent.ConcurrentHashMap
 class DebugActionBus {
     private val actions = ConcurrentHashMap<String, suspend (DebugActionRequest) -> DebugActionResult>()
     private val targets = ConcurrentHashMap<String, DebugActionTarget>()
+    private val fallbackActions = ConcurrentHashMap<String, suspend (DebugActionRequest) -> DebugActionResult>()
+    private val fallbackTargets = ConcurrentHashMap<String, DebugActionTarget>()
 
     fun registerAction(
         target: DebugActionTarget,
@@ -24,8 +26,28 @@ class DebugActionBus {
         targets.remove(targetId)
     }
 
+    fun registerFallbackAction(
+        target: DebugActionTarget,
+        action: suspend (DebugActionRequest) -> DebugActionResult,
+    ) {
+        fallbackActions[target.targetId] = action
+        fallbackTargets[target.targetId] = target.normalize()
+    }
+
+    fun unregisterFallbackAction(targetId: String) {
+        fallbackActions.remove(targetId)
+        fallbackTargets.remove(targetId)
+    }
+
     fun targets(): List<DebugActionTarget> {
-        return targets.values.sortedBy { it.targetId }
+        val merged = linkedMapOf<String, DebugActionTarget>()
+        fallbackTargets.values.sortedBy { it.targetId }.forEach { target ->
+            merged[target.targetId] = target
+        }
+        targets.values.sortedBy { it.targetId }.forEach { target ->
+            merged[target.targetId] = target
+        }
+        return merged.values.toList()
     }
 
     suspend fun dispatch(request: DebugActionRequest): DebugActionResult {
@@ -33,7 +55,7 @@ class DebugActionBus {
             ok = false,
             message = "missing targetId",
         )
-        val action = actions[targetId] ?: return DebugActionResult(
+        val action = actions[targetId] ?: fallbackActions[targetId] ?: return DebugActionResult(
             ok = false,
             message = "target not found: $targetId",
         )

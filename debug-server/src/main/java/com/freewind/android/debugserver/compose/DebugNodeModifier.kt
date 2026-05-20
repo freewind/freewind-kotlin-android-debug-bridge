@@ -12,7 +12,6 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import com.freewind.android.debugserver.domain.models.DebugNodeDraft
 
 object DebugNodeTypes {
     const val BUTTON = "Button"

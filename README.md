@@ -22,6 +22,7 @@
 
 - `DebugBridge`
 - `DebugNodeRegistry`
+- `DebugViewRegistry`
 - `Modifier.debugNode(...)`
 - `Modifier.debugTextNode(...)`
 - `Modifier.debugButtonNode(...)`
@@ -32,7 +33,9 @@
 - `Modifier.debugRowNode(...)`
 - `Modifier.debugLazyColumnNode(...)`
 - `DebugBridge.publishComposeSnapshot(...)`
+- `DebugBridge.publishViewSnapshot(...)`
 - `DebugBridge.registerComposeAction(...)`
+- `View.debugNode(...)`
 - `DebugBridge.log(...)`
 - `DebugBridge.RecordScrollState(...)`
 - `DebugBridge.RecordLazyListScroll(...)`
@@ -245,7 +248,57 @@ OutlinedTextField(
 - `log(...)` 只负责记结构化事件
 - 原业务逻辑仍直接调用原 `handler`
 - `registerComposeAction(...)` 负责把 `targetId -> action handler` 暴露给 `POST /action`
+- `publishViewSnapshot(...)` 会给当前 view tree 同步默认 fallback action：`click / longClick / input / setChecked`
+- 若同一 `targetId` 既有 `registerComposeAction(...)` 又有 view fallback action，显式注册优先
 - 旧的 `recordClick/recordToggle/recordTextInput/...` 仍保留，但已不推荐
+
+### 3.1 非 Compose / View 系 app
+
+适合：
+
+- 传统 `Activity + XML`
+- `ListView/RecyclerView/AdapterView`
+- 想先拿到全树 snapshot，再按需给关键节点补稳定 id
+
+最小接法：
+
+```kotlin
+private val debugBridge = DebugBridge(appName = "Your App")
+private val debugRegistry = DebugViewRegistry()
+
+override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    setContentView(R.layout.activity_main)
+    debugBridge.start()
+
+    findViewById<View>(R.id.saveButton).debugNode(
+        id = "save_button",
+        type = "Button",
+        text = "Save",
+        role = "button",
+        clickable = true,
+    )
+}
+
+private fun publishDebugSnapshot() {
+    debugBridge.publishViewSnapshot(
+        registry = debugRegistry,
+        rootView = findViewById(R.id.root),
+        screenName = "MainActivity",
+        appState = mapOf(
+            "route" to "main",
+        ),
+    )
+}
+```
+
+说明：
+
+- 不打 `debugNode(...)` 也会抓 view tree；但 id 可能退化成路径型，适合探索，不适合长期脚本
+- 给关键节点补 `id/text/role` 后，AI 更稳
+- `AdapterView` item root 默认支持 `click`
+- `EditText` 默认支持 `input`
+- `CompoundButton` 默认支持 `setChecked`
 
 ### 4. 用 adb 转发访问
 
