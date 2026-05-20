@@ -58,6 +58,7 @@ class DebugServerHandler(
         request: DebugActionRequest,
         timeoutMs: Long? = null,
     ): DebugActionResult {
+        val startedAt = System.currentTimeMillis()
         val result = try {
             if (timeoutMs == null) {
                 actionBus.dispatch(request)
@@ -70,13 +71,19 @@ class DebugServerHandler(
             DebugActionResult(
                 ok = false,
                 message = "action timeout after ${timeoutMs ?: 0L}ms",
+                errorType = "TimeoutCancellationException",
+                timedOut = true,
             )
         } catch (error: Throwable) {
             DebugActionResult(
                 ok = false,
                 message = buildActionErrorMessage(error),
+                errorType = error::class.java.simpleName.ifBlank { error::class.java.name },
             )
         }
+        val completedResult = result.copy(
+            durationMs = result.durationMs ?: (System.currentTimeMillis() - startedAt),
+        )
         store.recordOperation(
             source = DebugOperationSource.fromWireValue(request.source) ?: DebugOperationSource.AI,
             action = request.action,
@@ -84,11 +91,11 @@ class DebugServerHandler(
             text = request.text,
             dx = request.dx,
             dy = request.dy,
-            success = result.ok,
-            message = result.message,
-            extra = request.args,
+            success = completedResult.ok,
+            message = completedResult.message,
+            extra = request.args + completedResult.toOperationDetails(),
         )
-        return result
+        return completedResult
     }
 
     private fun buildActionErrorMessage(error: Throwable): String {
@@ -111,5 +118,13 @@ class DebugServerHandler(
 
     fun actionTargets(): List<DebugActionTarget> {
         return actionBus.targets()
+    }
+
+    private fun DebugActionResult.toOperationDetails(): Map<String, String> {
+        return linkedMapOf(
+            "durationMs" to durationMs?.toString().orEmpty(),
+            "errorType" to errorType.orEmpty(),
+            "timedOut" to timedOut.toString(),
+        ).filterValues { it.isNotBlank() }
     }
 }

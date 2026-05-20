@@ -10,6 +10,7 @@ import com.freewind.android.debugserver.domain.models.DebugSnapshotQuery
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.UUID
 
 // 只放内存态。
 class DebugServerStore(
@@ -19,6 +20,8 @@ class DebugServerStore(
 ) {
     private val lock = Any()
     private var nextOperationSeq = 1L
+    private val serverStartedAtEpochMs = System.currentTimeMillis()
+    private val serverSessionId = UUID.randomUUID().toString()
 
     private val snapshotState = MutableStateFlow(
         DebugSnapshot(
@@ -35,12 +38,23 @@ class DebugServerStore(
 
     private val operationState = MutableStateFlow<List<DebugOperation>>(emptyList())
     private val targetStateState = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
+    private val buildVersionState = MutableStateFlow("unset")
 
     fun snapshot(): StateFlow<DebugSnapshot> = snapshotState.asStateFlow()
 
     fun operations(): StateFlow<List<DebugOperation>> = operationState.asStateFlow()
 
     fun targetStates(): StateFlow<Map<String, Map<String, String>>> = targetStateState.asStateFlow()
+
+    fun buildVersion(): StateFlow<String> = buildVersionState.asStateFlow()
+
+    fun serverStartedAtEpochMs(): Long = serverStartedAtEpochMs
+
+    fun serverSessionId(): String = serverSessionId
+
+    fun setBuildVersion(version: String) {
+        buildVersionState.value = version.trim().ifBlank { "unset" }
+    }
 
     fun updateSnapshot(
         screenName: String,

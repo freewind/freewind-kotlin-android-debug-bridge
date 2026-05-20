@@ -20,7 +20,9 @@ import io.ktor.server.application.call
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.ApplicationEngine
 import io.ktor.server.engine.embeddedServer
+import io.ktor.server.request.httpMethod
 import io.ktor.server.request.receiveText
+import io.ktor.server.request.uri
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
@@ -82,6 +84,9 @@ class DebugHttpServer(
             get("/help") {
                 call.respondJsonSafely { buildHelpJson() }
             }
+            get("/build-version") {
+                call.respondJsonSafely { buildBuildVersionJson() }
+            }
             get("/action") {
                 call.respondJsonSafely { buildActionJson(call.request.queryParameters) }
             }
@@ -140,6 +145,17 @@ class DebugHttpServer(
         val payload = runCatching {
             buildBody()
         }.getOrElse { error ->
+            store.recordOperation(
+                source = DebugOperationSource.SYSTEM,
+                action = "http_route_error",
+                success = false,
+                message = buildRouteErrorMessage(error),
+                extra = linkedMapOf(
+                    "method" to request.httpMethod.value,
+                    "path" to request.uri.substringBefore('?'),
+                    "errorType" to error::class.java.simpleName.ifBlank { error::class.java.name },
+                ),
+            )
             buildRouteErrorJson(error)
         }
         respondText(
@@ -159,7 +175,7 @@ class DebugHttpServer(
             put(
                 "capabilities",
                 JSONArray().apply {
-                    listOf("action", "logs", "state", "snapshot").forEach(::put)
+                    listOf("build-version", "action", "logs", "state", "snapshot").forEach(::put)
                 },
             )
             put(
@@ -186,6 +202,13 @@ class DebugHttpServer(
                             method = "GET",
                             path = "/help",
                             summary = "return dynamic full help for AI",
+                        ),
+                    )
+                    put(
+                        endpointJson(
+                            method = "GET",
+                            path = "/build-version",
+                            summary = "return app-specified compile-time build version for restart checks",
                         ),
                     )
                     put(
@@ -242,11 +265,34 @@ class DebugHttpServer(
                 JSONArray().apply {
                     listOf(
                         "GET /help",
+                        "GET /build-version",
                         "GET /logs",
                         "GET /snapshot?targetId=save_button&scope=branchToRoot&fields=id,type,text,bounds",
                         "POST /action {\"action\":\"click\",\"targetId\":\"save_button\"}",
                         "POST /action {\"action\":\"click\",\"targetId\":\"save_button\",\"source\":\"human\",\"args\":{\"reason\":\"retry\"}}",
                     ).forEach(::put)
+                },
+            )
+        }.toString()
+    }
+
+    private fun buildBuildVersionJson(): String {
+        val snapshot = store.snapshot().value
+        return JSONObject().apply {
+            put("buildVersion", store.buildVersion().value)
+            put("buildVersionSource", "app-set")
+            put("serverSessionId", store.serverSessionId())
+            put("serverStartedAtEpochMs", store.serverStartedAtEpochMs())
+            put("serverStartedAt", formatEpochMs(store.serverStartedAtEpochMs()))
+            put("appName", snapshot.appName)
+            put("screenName", snapshot.screenName)
+            put("snapshotUpdatedAtEpochMs", snapshot.updatedAtEpochMs)
+            put("snapshotUpdatedAt", formatEpochMs(snapshot.updatedAtEpochMs))
+            put(
+                "server",
+                JSONObject().apply {
+                    put("host", snapshot.serverHost)
+                    put("port", snapshot.serverPort)
                 },
             )
         }.toString()
@@ -660,22 +706,32 @@ class DebugHttpServer(
 
     private fun DebugActionResult.toHttpJsonString(request: DebugActionRequest): String {
         return JSONObject().apply {
+            put("ok", ok)
             put("accepted", ok)
             put("message", message)
             put("action", request.action)
             putOrNull("targetId", request.targetId)
+            putOrNull("errorType", errorType)
+            put("timedOut", timedOut)
+            putOrNull("durationMs", durationMs)
         }.toString()
     }
 
     private fun buildRouteErrorJson(error: Throwable): String {
         val errorType = error::class.java.simpleName.ifBlank { "Throwable" }
-        val message = error.message.orEmpty().trim()
+        val message = buildRouteErrorMessage(error)
         return JSONObject().apply {
             put("ok", false)
             put("accepted", false)
             put("errorType", errorType)
-            put("message", if (message.isBlank()) "route error: $errorType" else "route error: $errorType: $message")
+            put("message", message)
         }.toString()
+    }
+
+    private fun buildRouteErrorMessage(error: Throwable): String {
+        val errorType = error::class.java.simpleName.ifBlank { "Throwable" }
+        val message = error.message.orEmpty().trim()
+        return if (message.isBlank()) "route error: $errorType" else "route error: $errorType: $message"
     }
 
     private fun DebugNode.toJsonObject(nodeFields: Set<String>): JSONObject {

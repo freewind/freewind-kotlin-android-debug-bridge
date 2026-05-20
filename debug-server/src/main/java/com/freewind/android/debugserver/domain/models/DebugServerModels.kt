@@ -65,11 +65,15 @@ data class DebugActionRequest(
 data class DebugActionResult(
     val ok: Boolean,
     val message: String,
+    val errorType: String? = null,
+    val durationMs: Long? = null,
+    val timedOut: Boolean = false,
 )
 
 enum class DebugOperationSource(
     val wireValue: String,
 ) {
+    SYSTEM("system"),
     HUMAN("human"),
     AI("ai");
 

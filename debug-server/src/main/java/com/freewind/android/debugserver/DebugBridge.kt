@@ -41,6 +41,10 @@ class DebugBridge(
         httpServer.stop()
     }
 
+    fun setBuildVersion(version: String) {
+        store.setBuildVersion(version)
+    }
+
     fun publishSnapshot(
         screenName: String,
         appState: Map<String, String>,
