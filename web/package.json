@@ -9,6 +9,7 @@
     "sync-assets": "node ./scripts/sync-assets.mjs"
   },
   "dependencies": {
+    "@ant-design/icons": "^6.2.3",
     "antd": "^6.4.3",
     "freewind-antd-components": "github:freewind/freewind-antd-components#master",
     "freewind-ts-utils": "github:freewind/freewind-ts-utils#master",

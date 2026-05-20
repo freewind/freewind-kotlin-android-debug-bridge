@@ -61,6 +61,8 @@ data class DebugActionRequest(
     val text: String?,
     val dx: Float?,
     val dy: Float?,
+    val args: Map<String, String> = emptyMap(),
+    val source: String? = null,
 )
 
 // 动作结果。

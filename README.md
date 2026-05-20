@@ -318,6 +318,9 @@ http://127.0.0.1:8765
 
 - `GET /`：返回给人看的可视化页
 - 当前实现是 React + Antd 控制台，不再是静态占位 HTML
+- `GET /help`：返回动态全量 help，给 AI 一次性拿结构、字段、示例
+- `POST /action` body 支持 `action/targetId/text/dx/dy/args/source`
+- `DELETE /logs` 返回 `accepted/message/clearedCount`，同时保留 `ok/deletedCount`
 - `GET /help`：返回动态全量 help，只给结构、能力、字段、示例，不给大数据
 - `GET /action`、`GET /logs`、`GET /state`、`GET /snapshot`：默认返回该资源当前时刻的 summary
 - `DELETE /logs`：清空当前内存里的全部日志
@@ -521,7 +524,8 @@ debugBridge.registerComposeAction(
 
 - 外部 AI 发动作给 app
 - server 按 `targetId` 找已注册 handler
-- 自动记一条 `source=ai` log
+- 自动记一条 action log
+- `source` 取 req 里的 `source`，未传时默认 `ai`
 
 body 字段：
 
@@ -530,6 +534,8 @@ body 字段：
 - `text`
 - `dx`
 - `dy`
+- `args`
+- `source`
 
 示例：
 
@@ -538,7 +544,11 @@ curl -X POST "http://127.0.0.1:8765/action" \
   -H "Content-Type: application/json" \
   -d '{
     "action": "click",
-    "targetId": "save_button"
+    "targetId": "save_button",
+    "source": "human",
+    "args": {
+      "reason": "retry"
+    }
   }'
 ```
 
@@ -616,6 +626,9 @@ curl -X POST "http://127.0.0.1:8765/action" \
 
 ```json
 {
+  "accepted": true,
+  "message": "cleared",
+  "clearedCount": 128,
   "ok": true,
   "deletedCount": 128
 }

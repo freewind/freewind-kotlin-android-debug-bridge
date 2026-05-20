@@ -108,10 +108,13 @@ class DebugHttpServer(
                 val deletedCount = store.operations().value.size
                 store.clearOperations()
                 call.respondText(
-                    JSONObject()
-                        .put("ok", true)
-                        .put("deletedCount", deletedCount)
-                        .toString(),
+                    JSONObject().apply {
+                        put("accepted", true)
+                        put("message", "cleared")
+                        put("clearedCount", deletedCount)
+                        put("ok", true)
+                        put("deletedCount", deletedCount)
+                    }.toString(),
                     ContentType.Application.Json,
                 )
             }
@@ -185,7 +188,7 @@ class DebugHttpServer(
                             method = "POST",
                             path = "/action",
                             summary = "trigger one concrete action",
-                            bodyFields = listOf("action", "targetId", "text", "dx", "dy"),
+                            bodyFields = listOf("action", "targetId", "text", "dx", "dy", "args", "source"),
                         ),
                     )
                     put(
@@ -229,6 +232,7 @@ class DebugHttpServer(
                         "GET /logs",
                         "GET /snapshot?targetId=save_button&scope=branchToRoot&fields=id,type,text,bounds",
                         "POST /action {\"action\":\"click\",\"targetId\":\"save_button\"}",
+                        "POST /action {\"action\":\"click\",\"targetId\":\"save_button\",\"source\":\"human\",\"args\":{\"reason\":\"retry\"}}",
                     ).forEach(::put)
                 },
             )
@@ -501,6 +505,8 @@ class DebugHttpServer(
             text = json.readNullableString("text"),
             dx = json.readNullableDouble("dx")?.toFloat(),
             dy = json.readNullableDouble("dy")?.toFloat(),
+            args = json.readStringMap("args"),
+            source = json.readNullableString("source"),
         )
     }
 
@@ -703,6 +709,23 @@ class DebugHttpServer(
             return null
         }
         return optDouble(key)
+    }
+
+    private fun JSONObject?.readStringMap(key: String): Map<String, String> {
+        if (this == null || !has(key) || isNull(key)) {
+            return emptyMap()
+        }
+        val json = optJSONObject(key) ?: return emptyMap()
+        return json.keys().asSequence()
+            .mapNotNull { entryKey ->
+                val value = json.opt(entryKey)
+                when {
+                    value == null || value == JSONObject.NULL -> null
+                    else -> entryKey to value.toString()
+                }
+            }
+            .toMap()
+            .toSortedMap()
     }
 
     private fun readJsonObject(body: String): JSONObject? {

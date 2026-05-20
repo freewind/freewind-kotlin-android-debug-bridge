@@ -1,14 +1,4 @@
-export type JsonObject = Record<string, unknown>
-
-export interface HelpEndpoint {
-  method: string
-  path: string
-  summary: string
-  queryFields?: string[]
-  bodyFields?: string[]
-}
-
-export interface HelpResponse {
+export type HelpResponse = {
   appName: string
   screenName: string
   serverTime: string
@@ -19,59 +9,66 @@ export interface HelpResponse {
     stateKeyCount: number
     snapshotNodeCount: number
   }
-  endpoints: HelpEndpoint[]
+  endpoints: Array<{
+    method: string
+    path: string
+    summary: string
+    queryFields?: string[]
+    bodyFields?: string[]
+  }>
   examples: string[]
 }
 
-export interface ActionExample {
+export type ActionRequest = {
   action: string
   targetId: string
+  text?: string
+  dx?: number
+  dy?: number
+  args?: Record<string, string>
+  source?: string
 }
 
-export interface ActionSpec {
-  name: string
-  args: string[]
-  summary?: string | null
-  example: ActionExample
+export type ActionResponse = {
+  accepted: boolean
+  message: string
+  action?: string
+  targetId?: string
 }
 
-export interface ActionTarget {
-  targetId: string
-  targetType?: string | null
-  screen?: string | null
-  actions: ActionSpec[]
-}
-
-export interface ActionSummaryResponse {
+export type ActionCatalogResponse = {
   summary: {
     targetCount: number
     actionCount: number
   }
-  items: ActionTarget[]
+  items: Array<{
+    targetId: string
+    targetType?: string | null
+    screen?: string | null
+    actions: Array<{
+      name: string
+      args: string[]
+      summary?: string | null
+      example: ActionRequest
+    }>
+  }>
 }
 
-export interface ActionResult {
-  accepted: boolean
-  message: string
-  action: string
-  targetId?: string | null
-}
-
-export interface LogItem {
+export type LogEntry = {
   seq: number
   time: string
   source: string
   level: string
   event: string
-  targetId?: string | null
-  summary?: string | null
-  data: Record<string, string | null>
+  targetId?: string
+  summary?: string
+  data: Record<string, string>
 }
 
-export interface LogsSummaryResponse {
-  summary: {
+export type LogsResponse = {
+  summary?: {
     total: number
-    timeRange: {
+    timeRange?: {
       from?: string | null
       to?: string | null
     }
@@ -79,29 +76,28 @@ export interface LogsSummaryResponse {
     sourceCounts: Record<string, number>
     eventCountsTop: Record<string, number>
   }
+  items?: LogEntry[]
+  nextAfterSeq?: number
 }
 
-export interface LogsQueryResponse {
-  items: LogItem[]
-  nextAfterSeq: number
+export type LogsClearResponse = {
+  accepted: boolean
+  message: string
+  clearedCount: number
+  ok?: boolean
+  deletedCount?: number
 }
 
-export interface StateSummaryResponse {
-  summary: {
-    appStateKeys: Array<{
-      key: string
-      sample: string
-    }>
+export type StateResponse = {
+  summary?: {
+    appStateKeys: Array<{ key: string; sample: string }>
     targetStateTargets: string[]
   }
-}
-
-export interface StateQueryResponse {
   appState?: Record<string, string>
   targetState?: Record<string, string>
 }
 
-export interface SnapshotNode {
+export type SnapshotNode = {
   id?: string
   parentId?: string | null
   type?: string
@@ -122,19 +118,21 @@ export interface SnapshotNode {
   } | null
 }
 
-export interface SnapshotSummaryResponse {
-  summary: {
+export type SnapshotPreviewNode = SnapshotNode & {
+  id: string
+  bounds: NonNullable<SnapshotNode['bounds']>
+}
+
+export type SnapshotResponse = {
+  summary?: {
     screen: string
     nodeCount: number
     rootIds: string[]
     typeCounts: Record<string, number>
     clickableCount: number
   }
-  fieldCatalog: string[]
-  examples: string[]
-}
-
-export interface SnapshotQueryResponse {
-  screen: string
-  nodes: SnapshotNode[]
+  fieldCatalog?: string[]
+  examples?: string[]
+  screen?: string
+  nodes?: SnapshotNode[]
 }

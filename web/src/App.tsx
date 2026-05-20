@@ -1,996 +1,325 @@
+import { InfoCircleOutlined } from '@ant-design/icons'
 import {
   App as AntdApp,
   Button,
   Card,
-  Descriptions,
+  Divider,
   Flex,
   Form,
   Input,
   InputNumber,
   Layout,
-  Modal,
+  Popover,
   Select,
   Space,
   Statistic,
-  Switch,
   Table,
   Tabs,
   Tag,
+  Tree,
   Typography,
+  type FormItemProps,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
+import type { DataNode } from 'antd/es/tree'
 import { FloatLabel, JsonPreviewer } from 'freewind-antd-components'
 import type { FC, ReactNode } from 'react'
-import { startTransition, useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { buildQuery, fetchJSON } from './api'
 import type {
-  ActionResult,
-  ActionSummaryResponse,
-  ActionTarget,
+  ActionCatalogResponse,
+  ActionRequest,
+  ActionResponse,
   HelpResponse,
-  LogItem,
-  LogsQueryResponse,
-  LogsSummaryResponse,
-  SnapshotNode,
-  SnapshotQueryResponse,
-  SnapshotSummaryResponse,
-  StateQueryResponse,
-  StateSummaryResponse,
+  LogEntry,
+  LogsClearResponse,
+  LogsResponse,
+  SnapshotPreviewNode,
+  SnapshotResponse,
+  StateResponse,
 } from './types'
 
+type SnapshotTreeNode = {
+  id: string
+  kind: string
+  label: string
+  clickable: boolean
+  children: SnapshotTreeNode[]
+}
+
 const { Header, Content } = Layout
-const pollIntervalMs = 4000
-const defaultSnapshotFields =
-  'id,parentId,type,text,role,backgroundColor,contentColor,visible,enabled,clickable,value,extra,bounds'
+const { Title, Text } = Typography
+const compactInputStyle = { width: '100%' } as const
+const compactNumberStyle = { width: '100%' } as const
+const compactSelectStyle = { width: '100%' } as const
+const commonSelectProps = {
+  popupMatchSelectWidth: false,
+  optionFilterProp: 'label' as const,
+  showSearch: true,
+  size: 'small' as const,
+  style: compactSelectStyle,
+}
+const snapshotPreviewFallbackWidth = 520
+const snapshotPreviewFields = [
+  'id',
+  'parentId',
+  'type',
+  'text',
+  'role',
+  'backgroundColor',
+  'contentColor',
+  'visible',
+  'enabled',
+  'clickable',
+  'value',
+  'extra',
+  'bounds',
+].join(',')
+const triStateOptions = [
+  { label: 'true', value: 'true' },
+  { label: 'false', value: 'false' },
+]
+const stateScopeOptions = [
+  { label: 'app', value: 'app' },
+  { label: 'target', value: 'target' },
+  { label: 'branch', value: 'branch' },
+]
+const snapshotScopeOptions = [
+  { label: 'all', value: 'all' },
+  { label: 'self', value: 'self' },
+  { label: 'parent', value: 'parent' },
+  { label: 'ancestors', value: 'ancestors' },
+  { label: 'branchToRoot', value: 'branchToRoot' },
+  { label: 'children', value: 'children' },
+  { label: 'subtree', value: 'subtree' },
+]
 
-interface ActionPayload {
-  action: string
-  targetId: string
-  text?: string
-  dx?: number
-  dy?: number
+function toOptions(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.filter((value): value is string => !!value)))
+    .sort((left, right) => left.localeCompare(right))
+    .map((value) => ({
+      label: value,
+      value,
+    }))
 }
 
-interface LogsQueryForm {
-  event?: string
-  level?: string
-  source?: string
-  targetId?: string
-  screen?: string
-  keyword?: string
-  from?: string
-  to?: string
-  limit?: number
+function renderJson(value: unknown, maxHeight = 280) {
+  return <JsonPreviewer value={value ?? {}} maxHeight={maxHeight} />
 }
 
-interface StateQueryForm {
-  keys?: string
-  targetId?: string
-  scope?: 'app' | 'target' | 'branch'
-}
-
-interface SnapshotQueryForm {
-  targetId?: string
-  scope?: 'all' | 'self' | 'parent' | 'ancestors' | 'branchToRoot' | 'children' | 'subtree'
-  depth?: number
-  types?: string
-  textKeyword?: string
-  fields?: string
-  limit?: number
-  visible?: boolean
-  clickable?: boolean
-  enabled?: boolean
-}
-
-interface PreviewTreeNode {
-  children: PreviewTreeNode[]
-  key: string
-  node: SnapshotNode
-}
-
-const App: FC = () => {
-  const { message } = AntdApp.useApp()
-  const [help, setHelp] = useState<HelpResponse | null>(null)
-  const [actionSummary, setActionSummary] = useState<ActionSummaryResponse | null>(null)
-  const [logsSummary, setLogsSummary] = useState<LogsSummaryResponse | null>(null)
-  const [stateSummary, setStateSummary] = useState<StateSummaryResponse | null>(null)
-  const [snapshotSummary, setSnapshotSummary] = useState<SnapshotSummaryResponse | null>(null)
-  const [logsQueryResult, setLogsQueryResult] = useState<LogsQueryResponse | null>(null)
-  const [stateQueryResult, setStateQueryResult] = useState<StateQueryResponse | null>(null)
-  const [snapshotQueryResult, setSnapshotQueryResult] = useState<SnapshotQueryResponse | null>(null)
-  const [actionResult, setActionResult] = useState<ActionResult | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [autoRefresh, setAutoRefresh] = useState(true)
-  const [actionModalOpen, setActionModalOpen] = useState(false)
-  const [actionModalTitle, setActionModalTitle] = useState('Run Action')
-  const [logsForm] = Form.useForm<LogsQueryForm>()
-  const [stateForm] = Form.useForm<StateQueryForm>()
-  const [snapshotForm] = Form.useForm<SnapshotQueryForm>()
-  const [actionForm] = Form.useForm<ActionPayload>()
-
-  const refreshSummaries = async (silent = false) => {
-    if (!silent) {
-      setLoading(true)
-    }
-    try {
-      const [nextHelp, nextActionSummary, nextLogsSummary, nextStateSummary, nextSnapshotSummary] =
-        await Promise.all([
-          requestJson<HelpResponse>('/help'),
-          requestJson<ActionSummaryResponse>('/action'),
-          requestJson<LogsSummaryResponse>('/logs'),
-          requestJson<StateSummaryResponse>('/state'),
-          requestJson<SnapshotSummaryResponse>('/snapshot'),
-        ])
-      startTransition(() => {
-        setHelp(nextHelp)
-        setActionSummary(nextActionSummary)
-        setLogsSummary(nextLogsSummary)
-        setStateSummary(nextStateSummary)
-        setSnapshotSummary(nextSnapshotSummary)
-      })
-    } catch (error) {
-      if (!silent) {
-        message.error(toErrorMessage(error))
-      }
-    } finally {
-      if (!silent) {
-        setLoading(false)
-      }
-    }
-  }
-
-  useEffect(() => {
-    void refreshSummaries()
-  }, [])
-
-  useEffect(() => {
-    if (!autoRefresh) {
-      return
-    }
-    const timer = window.setInterval(() => {
-      void refreshSummaries(true)
-    }, pollIntervalMs)
-    return () => {
-      window.clearInterval(timer)
-    }
-  }, [autoRefresh])
-
-  const runAction = async (payload: ActionPayload, closeModal = false) => {
-    try {
-      const result = await requestJson<ActionResult>('/action', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(stripEmpty(payload)),
-      })
-      setActionResult(result)
-      message.success(`${result.action} → ${result.message}`)
-      if (closeModal) {
-        setActionModalOpen(false)
-      }
-      await Promise.all([refreshSummaries(true), queryLogs(logsForm.getFieldsValue())])
-    } catch (error) {
-      message.error(toErrorMessage(error))
-    }
-  }
-
-  const openActionModal = (payload?: Partial<ActionPayload>) => {
-    actionForm.setFieldsValue({
-      action: payload?.action ?? '',
-      targetId: payload?.targetId ?? '',
-      text: payload?.text,
-      dx: payload?.dx,
-      dy: payload?.dy,
-    })
-    setActionModalTitle(
-      payload?.targetId && payload?.action
-        ? `Run ${payload.action} on ${payload.targetId}`
-        : 'Run Action',
-    )
-    setActionModalOpen(true)
-  }
-
-  const queryLogs = async (rawValues?: LogsQueryForm) => {
-    const values = rawValues ?? logsForm.getFieldsValue()
-    const query = buildSearch({
-      event: values.event,
-      level: values.level,
-      source: values.source,
-      targetId: values.targetId,
-      screen: values.screen,
-      keyword: values.keyword,
-      from: values.from,
-      to: values.to,
-      limit: values.limit,
-    })
-    try {
-      const result = await requestJson<LogsQueryResponse>(`/logs${query}`)
-      setLogsQueryResult(result)
-    } catch (error) {
-      message.error(toErrorMessage(error))
-    }
-  }
-
-  const clearLogs = async () => {
-    try {
-      const result = await requestJson<{ ok: boolean; deletedCount: number }>('/logs', {
-        method: 'DELETE',
-      })
-      message.success(`deleted ${result.deletedCount} logs`)
-      setLogsQueryResult(null)
-      await refreshSummaries(true)
-    } catch (error) {
-      message.error(toErrorMessage(error))
-    }
-  }
-
-  const queryState = async (rawValues?: StateQueryForm) => {
-    const values = rawValues ?? stateForm.getFieldsValue()
-    const query = buildSearch({
-      keys: values.keys,
-      targetId: values.targetId,
-      scope: values.scope,
-    })
-    try {
-      const result = await requestJson<StateQueryResponse>(`/state${query}`)
-      setStateQueryResult(result)
-    } catch (error) {
-      message.error(toErrorMessage(error))
-    }
-  }
-
-  const querySnapshot = async (rawValues?: SnapshotQueryForm) => {
-    const values = rawValues ?? snapshotForm.getFieldsValue()
-    const query = buildSearch({
-      targetId: values.targetId,
-      scope: values.scope,
-      depth: values.depth,
-      types: values.types,
-      textKeyword: values.textKeyword,
-      fields: values.fields,
-      limit: values.limit,
-      visible: values.visible,
-      clickable: values.clickable,
-      enabled: values.enabled,
-    })
-    try {
-      const result = await requestJson<SnapshotQueryResponse>(`/snapshot${query}`)
-      setSnapshotQueryResult(result)
-    } catch (error) {
-      message.error(toErrorMessage(error))
-    }
-  }
-
-  useEffect(() => {
-    void querySnapshot({
-      fields: defaultSnapshotFields,
-      limit: 120,
-      scope: 'all',
-    })
-  }, [])
-
-  const helpEndpointColumns: ColumnsType<HelpResponse['endpoints'][number]> = [
-    { title: 'Method', dataIndex: 'method', width: 96, render: renderMethodTag },
-    { title: 'Path', dataIndex: 'path', width: 140 },
-    { title: 'Summary', dataIndex: 'summary' },
-    {
-      title: 'Query',
-      dataIndex: 'queryFields',
-      render: (value?: string[]) => renderTagList(value),
-    },
-    {
-      title: 'Body',
-      dataIndex: 'bodyFields',
-      render: (value?: string[]) => renderTagList(value),
-    },
-  ]
-
-  const actionColumns: ColumnsType<ActionTarget> = [
-    { title: 'Target', dataIndex: 'targetId', width: 180 },
-    { title: 'Type', dataIndex: 'targetType', width: 120, render: renderNullableText },
-    { title: 'Screen', dataIndex: 'screen', width: 140, render: renderNullableText },
-    {
-      title: 'Actions',
-      key: 'actions',
-      render: (_, record) => (
-        <Space wrap>
-          {record.actions.map((item) => (
-            <Button
-              key={`${record.targetId}-${item.name}`}
-              size="small"
-              onClick={() =>
-                void runAction(
-                  {
-                    action: item.name,
-                    targetId: record.targetId,
-                  },
-                  false,
-                )
-              }
-            >
-              {item.name}
-            </Button>
-          ))}
-          <Button size="small" onClick={() => openActionModal({ targetId: record.targetId })}>
-            custom
-          </Button>
-        </Space>
-      ),
-    },
-    {
-      title: 'Args',
-      key: 'args',
-      render: (_, record) =>
-        renderTagList(
-          record.actions.flatMap((item) => item.args.map((arg) => `${item.name}:${arg}`)),
-        ),
-    },
-  ]
-
-  const logsColumns: ColumnsType<LogItem> = [
-    { title: 'Seq', dataIndex: 'seq', width: 80 },
-    { title: 'Time', dataIndex: 'time', width: 150 },
-    { title: 'Source', dataIndex: 'source', width: 96, render: renderSourceTag },
-    { title: 'Level', dataIndex: 'level', width: 96, render: renderLevelTag },
-    { title: 'Event', dataIndex: 'event', width: 120 },
-    { title: 'Target', dataIndex: 'targetId', width: 180, render: renderNullableText },
-    { title: 'Summary', dataIndex: 'summary', width: 240, render: renderNullableText },
-    {
-      title: 'Data',
-      dataIndex: 'data',
-      render: (value: Record<string, string | null>) => <JsonBlock value={value} />,
-    },
-  ]
-
-  const snapshotColumns: ColumnsType<SnapshotNode> = [
-    { title: 'Id', dataIndex: 'id', width: 180, render: renderNullableText },
-    { title: 'Parent', dataIndex: 'parentId', width: 160, render: renderNullableText },
-    { title: 'Type', dataIndex: 'type', width: 120, render: renderNullableText },
-    { title: 'Text', dataIndex: 'text', width: 180, render: renderNullableText },
-    { title: 'Role', dataIndex: 'role', width: 120, render: renderNullableText },
-    { title: 'Visible', dataIndex: 'visible', width: 90, render: renderBooleanTag },
-    { title: 'Enabled', dataIndex: 'enabled', width: 90, render: renderBooleanTag },
-    { title: 'Clickable', dataIndex: 'clickable', width: 96, render: renderBooleanTag },
-    { title: 'Value', dataIndex: 'value', width: 140, render: renderNullableText },
-    {
-      title: 'Bounds',
-      dataIndex: 'bounds',
-      width: 240,
-      render: (value: SnapshotNode['bounds']) =>
-        value ? `${value.left}, ${value.top}, ${value.width}, ${value.height}` : '-',
-    },
-    {
-      title: 'Extra',
-      dataIndex: 'extra',
-      render: (value?: Record<string, string>) => <JsonBlock value={value ?? {}} />,
-    },
-  ]
-
+const JsonInfoButton: FC<{
+  title: string
+  value: unknown
+  maxHeight?: number
+}> = ({
+  title,
+  value,
+  maxHeight = 320,
+}) => {
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 16,
-        }}
-      >
-        <Space direction="vertical" size={0}>
-          <Typography.Title level={4} style={{ color: '#fff', margin: 0 }}>
-            {help?.appName ?? 'Debug Console'}
-          </Typography.Title>
-          <Typography.Text style={{ color: 'rgba(255,255,255,0.85)' }}>
-            {help?.screenName ?? 'loading'}
-          </Typography.Text>
-        </Space>
-        <Space>
-          <Typography.Text style={{ color: '#fff' }}>auto refresh</Typography.Text>
-          <Switch checked={autoRefresh} onChange={setAutoRefresh} />
-          <Button loading={loading} onClick={() => void refreshSummaries()}>
-            refresh
-          </Button>
-        </Space>
-      </Header>
-      <Content style={{ padding: 24 }}>
-        <Space direction="vertical" size="large" style={{ width: '100%' }}>
-          <WrapGrid>
-            <GridItem mdBasis="calc(25% - 12px)">
-              <Card>
-                <Statistic
-                  title="Action Targets"
-                  value={help?.counts.actionTargetCount ?? 0}
-                  suffix={actionSummary?.summary.actionCount ? `/${actionSummary.summary.actionCount}` : ''}
-                />
-              </Card>
-            </GridItem>
-            <GridItem mdBasis="calc(25% - 12px)">
-              <Card>
-                <Statistic title="Logs" value={logsSummary?.summary.total ?? 0} />
-              </Card>
-            </GridItem>
-            <GridItem mdBasis="calc(25% - 12px)">
-              <Card>
-                <Statistic title="State Keys" value={help?.counts.stateKeyCount ?? 0} />
-              </Card>
-            </GridItem>
-            <GridItem mdBasis="calc(25% - 12px)">
-              <Card>
-                <Statistic title="Snapshot Nodes" value={help?.counts.snapshotNodeCount ?? 0} />
-              </Card>
-            </GridItem>
-          </WrapGrid>
-
-          <Card>
-            <Descriptions size="small" column={{ xs: 1, md: 3 }}>
-              <Descriptions.Item label="Server Time">
-                {help?.serverTime ?? '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label="Capabilities">
-                {renderTagList(help?.capabilities)}
-              </Descriptions.Item>
-              <Descriptions.Item label="Logs Range">
-                {logsSummary?.summary.timeRange.from ?? '-'} ~ {logsSummary?.summary.timeRange.to ?? '-'}
-              </Descriptions.Item>
-            </Descriptions>
-          </Card>
-
-          <Tabs
-            items={[
-              {
-                key: 'action',
-                label: 'Action',
-                children: (
-                  <Space direction="vertical" size="large" style={{ width: '100%' }}>
-                    <Card
-                      title="Dynamic Actions"
-                      extra={<Button onClick={() => openActionModal()}>manual</Button>}
-                    >
-                      <Table
-                        rowKey="targetId"
-                        columns={actionColumns}
-                        dataSource={actionSummary?.items ?? []}
-                        pagination={false}
-                        scroll={{ x: 900 }}
-                      />
-                    </Card>
-                    <Card title="Last Result">
-                      <JsonBlock value={actionResult ?? {}} />
-                    </Card>
-                  </Space>
-                ),
-              },
-              {
-                key: 'logs',
-                label: 'Logs',
-                children: (
-                  <Space direction="vertical" size="large" style={{ width: '100%' }}>
-                    <Card
-                      title="Summary"
-                      extra={
-                        <Space>
-                          <Button onClick={() => void queryLogs()}>query</Button>
-                          <Button danger onClick={() => void clearLogs()}>
-                            clear
-                          </Button>
-                        </Space>
-                      }
-                    >
-                      <WrapGrid>
-                        <GridItem mdBasis="calc(33.333% - 11px)">
-                          <Card size="small" title="Levels">
-                            {renderCountTags(logsSummary?.summary.levelCounts)}
-                          </Card>
-                        </GridItem>
-                        <GridItem mdBasis="calc(33.333% - 11px)">
-                          <Card size="small" title="Sources">
-                            {renderCountTags(logsSummary?.summary.sourceCounts)}
-                          </Card>
-                        </GridItem>
-                        <GridItem mdBasis="calc(33.333% - 11px)">
-                          <Card size="small" title="Top Events">
-                            {renderCountTags(logsSummary?.summary.eventCountsTop)}
-                          </Card>
-                        </GridItem>
-                      </WrapGrid>
-                    </Card>
-                    <Card title="Query">
-                      <Form
-                        form={logsForm}
-                        layout="vertical"
-                        initialValues={{ limit: 20 }}
-                        onFinish={(values) => void queryLogs(values)}
-                      >
-                        <WrapGrid>
-                          <GridItem mdBasis="calc(25% - 12px)">
-                            <Form.Item name="event">
-                              <FloatLabel label="event">
-                                <Input />
-                              </FloatLabel>
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(25% - 12px)">
-                            <Form.Item label="level" name="level">
-                              <Select
-                                allowClear
-                                options={['debug', 'info', 'warn', 'error'].map((value) => ({
-                                  label: value,
-                                  value,
-                                }))}
-                              />
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(25% - 12px)">
-                            <Form.Item label="source" name="source">
-                              <Select
-                                allowClear
-                                options={['human', 'ai'].map((value) => ({
-                                  label: value,
-                                  value,
-                                }))}
-                              />
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(25% - 12px)">
-                            <Form.Item label="limit" name="limit">
-                              <InputNumber min={1} max={200} style={{ width: '100%' }} />
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(25% - 12px)">
-                            <Form.Item name="targetId">
-                              <FloatLabel label="targetId">
-                                <Input />
-                              </FloatLabel>
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(25% - 12px)">
-                            <Form.Item name="screen">
-                              <FloatLabel label="screen">
-                                <Input />
-                              </FloatLabel>
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(25% - 12px)">
-                            <Form.Item name="keyword">
-                              <FloatLabel label="keyword">
-                                <Input />
-                              </FloatLabel>
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(12.5% - 14px)">
-                            <Form.Item name="from">
-                              <FloatLabel label="from">
-                                <Input placeholder="20260519-223355" />
-                              </FloatLabel>
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(12.5% - 14px)">
-                            <Form.Item name="to">
-                              <FloatLabel label="to">
-                                <Input placeholder="20260519-223355" />
-                              </FloatLabel>
-                            </Form.Item>
-                          </GridItem>
-                        </WrapGrid>
-                        <Space>
-                          <Button type="primary" htmlType="submit">
-                            run query
-                          </Button>
-                          <Button onClick={() => logsForm.resetFields()}>reset</Button>
-                        </Space>
-                      </Form>
-                    </Card>
-                    <Card title="Query Result">
-                      <Table
-                        rowKey="seq"
-                        columns={logsColumns}
-                        dataSource={logsQueryResult?.items ?? []}
-                        pagination={false}
-                        scroll={{ x: 1400 }}
-                      />
-                    </Card>
-                  </Space>
-                ),
-              },
-              {
-                key: 'state',
-                label: 'State',
-                children: (
-                  <Space direction="vertical" size="large" style={{ width: '100%' }}>
-                    <Card title="Summary">
-                      <Descriptions size="small" column={{ xs: 1, md: 2 }}>
-                        <Descriptions.Item label="App State Keys">
-                          {renderTagList(
-                            stateSummary?.summary.appStateKeys.map(
-                              (item) => `${item.key}=${item.sample}`,
-                            ),
-                          )}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Target States">
-                          {renderTagList(stateSummary?.summary.targetStateTargets)}
-                        </Descriptions.Item>
-                      </Descriptions>
-                    </Card>
-                    <Card title="Query">
-                      <Form
-                        form={stateForm}
-                        layout="vertical"
-                        initialValues={{ scope: 'app' }}
-                        onFinish={(values) => void queryState(values)}
-                      >
-                        <WrapGrid>
-                          <GridItem mdBasis="calc(33.333% - 11px)">
-                            <Form.Item name="keys">
-                              <FloatLabel label="keys(csv)">
-                                <Input placeholder="route,count,keyword" />
-                              </FloatLabel>
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(33.333% - 11px)">
-                            <Form.Item name="targetId">
-                              <FloatLabel label="targetId">
-                                <Input />
-                              </FloatLabel>
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(33.333% - 11px)">
-                            <Form.Item label="scope" name="scope">
-                              <Select
-                                options={['app', 'target', 'branch'].map((value) => ({
-                                  label: value,
-                                  value,
-                                }))}
-                              />
-                            </Form.Item>
-                          </GridItem>
-                        </WrapGrid>
-                        <Space>
-                          <Button type="primary" htmlType="submit">
-                            run query
-                          </Button>
-                          <Button onClick={() => stateForm.resetFields()}>reset</Button>
-                        </Space>
-                      </Form>
-                    </Card>
-                    <Card title="Query Result">
-                      <JsonBlock value={stateQueryResult ?? {}} />
-                    </Card>
-                  </Space>
-                ),
-              },
-              {
-                key: 'snapshot',
-                label: 'Snapshot',
-                children: (
-                  <Space direction="vertical" size="large" style={{ width: '100%' }}>
-                    <Card title="Summary">
-                      <Descriptions size="small" column={{ xs: 1, md: 2 }}>
-                        <Descriptions.Item label="Roots">
-                          {renderTagList(snapshotSummary?.summary.rootIds)}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Types">
-                          {renderCountTags(snapshotSummary?.summary.typeCounts)}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Fields">
-                          {renderTagList(snapshotSummary?.fieldCatalog)}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Examples">
-                          {renderTagList(snapshotSummary?.examples)}
-                        </Descriptions.Item>
-                      </Descriptions>
-                    </Card>
-                    <Card title="Query">
-                      <Form
-                        form={snapshotForm}
-                        layout="vertical"
-                        initialValues={{
-                          scope: 'all',
-                          fields: defaultSnapshotFields,
-                          limit: 30,
-                        }}
-                        onFinish={(values) => void querySnapshot(values)}
-                      >
-                        <WrapGrid>
-                          <GridItem mdBasis="calc(25% - 12px)">
-                            <Form.Item name="targetId">
-                              <FloatLabel label="targetId">
-                                <Input />
-                              </FloatLabel>
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(25% - 12px)">
-                            <Form.Item label="scope" name="scope">
-                              <Select
-                                options={[
-                                  'all',
-                                  'self',
-                                  'parent',
-                                  'ancestors',
-                                  'branchToRoot',
-                                  'children',
-                                  'subtree',
-                                ].map((value) => ({ label: value, value }))}
-                              />
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(25% - 12px)">
-                            <Form.Item label="depth" name="depth">
-                              <InputNumber min={1} style={{ width: '100%' }} />
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(25% - 12px)">
-                            <Form.Item label="limit" name="limit">
-                              <InputNumber min={1} max={300} style={{ width: '100%' }} />
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(33.333% - 11px)">
-                            <Form.Item name="types">
-                              <FloatLabel label="types(csv)">
-                                <Input placeholder="Button,TextField" />
-                              </FloatLabel>
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(33.333% - 11px)">
-                            <Form.Item name="textKeyword">
-                              <FloatLabel label="textKeyword">
-                                <Input />
-                              </FloatLabel>
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(33.333% - 11px)">
-                            <Form.Item name="fields">
-                              <FloatLabel label="fields(csv)">
-                                <Input />
-                              </FloatLabel>
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(16.666% - 14px)">
-                            <Form.Item label="visible" name="visible" valuePropName="checked">
-                              <Switch />
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(16.666% - 14px)">
-                            <Form.Item
-                              label="clickable"
-                              name="clickable"
-                              valuePropName="checked"
-                            >
-                              <Switch />
-                            </Form.Item>
-                          </GridItem>
-                          <GridItem mdBasis="calc(16.666% - 14px)">
-                            <Form.Item label="enabled" name="enabled" valuePropName="checked">
-                              <Switch />
-                            </Form.Item>
-                          </GridItem>
-                        </WrapGrid>
-                        <Space>
-                          <Button type="primary" htmlType="submit">
-                            run query
-                          </Button>
-                          <Button onClick={() => snapshotForm.resetFields()}>reset</Button>
-                        </Space>
-                      </Form>
-                    </Card>
-                    <Card title="Query Result">
-                      <SnapshotPreview
-                        actionSummary={actionSummary}
-                        focusNode={(targetId) => {
-                          snapshotForm.setFieldsValue({
-                            fields: defaultSnapshotFields,
-                            scope: 'self',
-                            targetId,
-                          })
-                          stateForm.setFieldsValue({
-                            scope: 'target',
-                            targetId,
-                          })
-                        }}
-                        nodes={snapshotQueryResult?.nodes ?? []}
-                        onAction={(payload) => openActionModal(payload)}
-                      />
-                    </Card>
-                    <Card title="Query Result Table">
-                      <Table
-                        rowKey={(record, index) => record.id ?? String(index)}
-                        columns={snapshotColumns}
-                        dataSource={snapshotQueryResult?.nodes ?? []}
-                        pagination={false}
-                        scroll={{ x: 1600 }}
-                      />
-                    </Card>
-                  </Space>
-                ),
-              },
-              {
-                key: 'help',
-                label: 'Help',
-                children: (
-                  <Space direction="vertical" size="large" style={{ width: '100%' }}>
-                    <Card title="Endpoints">
-                      <Table
-                        rowKey={(record) => `${record.method}-${record.path}`}
-                        columns={helpEndpointColumns}
-                        dataSource={help?.endpoints ?? []}
-                        pagination={false}
-                        scroll={{ x: 900 }}
-                      />
-                    </Card>
-                    <Card title="Raw Help">
-                      <JsonBlock value={help ?? {}} />
-                    </Card>
-                  </Space>
-                ),
-              },
-            ]}
-          />
-        </Space>
-      </Content>
-
-      <Modal
-        title={actionModalTitle}
-        open={actionModalOpen}
-        onCancel={() => setActionModalOpen(false)}
-        onOk={() => void actionForm.submit()}
-      >
-        <Form form={actionForm} layout="vertical" onFinish={(values) => void runAction(values, true)}>
-          <Form.Item name="targetId" rules={[{ required: true, message: 'targetId required' }]}>
-            <FloatLabel label="targetId">
-              <Input />
-            </FloatLabel>
-          </Form.Item>
-          <Form.Item name="action" rules={[{ required: true, message: 'action required' }]}>
-            <FloatLabel label="action">
-              <Input />
-            </FloatLabel>
-          </Form.Item>
-          <Form.Item name="text">
-            <FloatLabel label="text">
-              <Input />
-            </FloatLabel>
-          </Form.Item>
-          <Form.Item label="dx" name="dx">
-            <InputNumber style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item label="dy" name="dy">
-            <InputNumber style={{ width: '100%' }} />
-          </Form.Item>
-        </Form>
-      </Modal>
-    </Layout>
+    <Popover
+      trigger="click"
+      placement="leftTop"
+      title={title}
+      content={(
+        <div style={{ width: 420, maxWidth: '70vw' }}>
+          {renderJson(value, maxHeight)}
+        </div>
+      )}
+    >
+      <Button size="small" type="text" icon={<InfoCircleOutlined />} />
+    </Popover>
   )
 }
 
-const JsonBlock: FC<{ value: unknown }> = ({ value }) => {
+const LabeledField: FC<{
+  name: string
+  label: string
+  className?: string
+  rules?: FormItemProps['rules']
+  children: ReactNode
+}> = ({
+  name,
+  label,
+  className,
+  rules,
+  children,
+}) => {
   return (
-    <JsonPreviewer
-      maxHeight={360}
-      style={{ marginBottom: 0 }}
-      value={value}
-    />
+    <div className={className}>
+      <Form.Item style={{ marginBottom: 0 }}>
+        <FloatLabel label={label} size="small">
+          <Form.Item name={name} noStyle rules={rules}>
+            {children}
+          </Form.Item>
+        </FloatLabel>
+      </Form.Item>
+    </div>
   )
+}
+
+const logColumns: ColumnsType<LogEntry> = [
+  { title: 'seq', dataIndex: 'seq', width: 80 },
+  { title: 'time', dataIndex: 'time', width: 170 },
+  { title: 'source', dataIndex: 'source', width: 120 },
+  { title: 'level', dataIndex: 'level', width: 100 },
+  { title: 'event', dataIndex: 'event', width: 140 },
+  { title: 'targetId', dataIndex: 'targetId', width: 180, render: (value) => value || '-' },
+  { title: 'summary', dataIndex: 'summary', width: 220, render: (value) => value || '-' },
+  {
+    title: 'data',
+    dataIndex: 'data',
+    width: 280,
+    render: (value) => <JsonPreviewer value={value || {}} maxHeight={160} />,
+  },
+]
+
+function normalizeSnapshotQuery(values?: Record<string, unknown>) {
+  const next: Record<string, unknown> = { ...(values || {}) }
+  if (!next.fields) {
+    next.fields = snapshotPreviewFields
+  }
+  if (next.limit === undefined || next.limit === null || next.limit === '') {
+    next.limit = 200
+  }
+  return next
+}
+
+function toSnapshotPreviewNodes(snapshot: SnapshotResponse | null): SnapshotPreviewNode[] {
+  return (snapshot?.nodes || [])
+    .filter((node): node is SnapshotPreviewNode => {
+      return !!node.id
+        && !!node.bounds
+        && node.visible !== false
+        && node.bounds.width > 0
+        && node.bounds.height > 0
+    })
+    .sort((left, right) => {
+      return (right.bounds.width * right.bounds.height) - (left.bounds.width * left.bounds.height)
+    })
+}
+
+function buildSnapshotTree(snapshot: SnapshotResponse | null): SnapshotTreeNode[] {
+  const nodes = (snapshot?.nodes || []).filter((node): node is NonNullable<SnapshotResponse['nodes']>[number] & { id: string } => !!node.id)
+  const byParent = nodes.reduce<Record<string, typeof nodes>>((result, node) => {
+    const parentKey = node.parentId || '__root__'
+    const current = result[parentKey] || []
+    current.push(node)
+    result[parentKey] = current
+    return result
+  }, {})
+
+  const sortNodes = (items: typeof nodes) => {
+    return [...items].sort((left, right) => {
+      const topDiff = (left.bounds?.top || 0) - (right.bounds?.top || 0)
+      if (topDiff !== 0) {
+        return topDiff
+      }
+      return (left.bounds?.left || 0) - (right.bounds?.left || 0)
+    })
+  }
+
+  const toTreeNode = (node: typeof nodes[number]): SnapshotTreeNode => {
+    return {
+      id: node.id,
+      kind: node.type || node.role || 'Node',
+      label: node.text || node.value || '',
+      clickable: !!node.clickable,
+      children: sortNodes(byParent[node.id] || []).map(toTreeNode),
+    }
+  }
+
+  return sortNodes(byParent.__root__ || []).map(toTreeNode)
+}
+
+function previewBackgroundColor(type?: string) {
+  const key = (type || '').toLowerCase()
+  if (key.includes('button')) return '#e6f4ff'
+  if (key.includes('text')) return 'transparent'
+  if (key.includes('switch')) return '#f6ffed'
+  if (key.includes('field') || key.includes('input')) return '#fffbe6'
+  return '#ffffff'
 }
 
 const SnapshotPreview: FC<{
-  actionSummary: ActionSummaryResponse | null
-  focusNode: (targetId: string) => void
-  nodes: SnapshotNode[]
-  onAction: (payload: Partial<ActionPayload>) => void
-}> = ({ actionSummary, focusNode, nodes, onAction }) => {
-  if (nodes.length === 0) {
-    return (
-      <Typography.Text type="secondary">
-        no snapshot data yet
-      </Typography.Text>
-    )
+  snapshot: SnapshotResponse | null
+  onFocusNode: (targetId: string) => void
+}> = ({ snapshot, onFocusNode }) => {
+  const nodes = toSnapshotPreviewNodes(snapshot)
+  const shellRef = useRef<HTMLDivElement | null>(null)
+  const [canvasWidth, setCanvasWidth] = useState(snapshotPreviewFallbackWidth)
+
+  useEffect(() => {
+    const element = shellRef.current
+    if (!element) return
+    const updateWidth = () => {
+      setCanvasWidth(Math.max(420, Math.floor(element.clientWidth - 2)))
+    }
+    updateWidth()
+    const observer = new ResizeObserver(() => updateWidth())
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+
+  if (!nodes.length) {
+    return <Text type="secondary">no bounded nodes，先点 Query Snapshot</Text>
   }
 
-  const boundedNodes = nodes.filter((node) => node.bounds)
-  const useBoundsPreview = boundedNodes.length >= Math.max(2, Math.ceil(nodes.length / 2))
-  const actionMap = new Map(actionSummary?.items.map((item) => [item.targetId, item]) ?? [])
+  const minLeft = Math.min(...nodes.map((item) => item.bounds.left))
+  const minTop = Math.min(...nodes.map((item) => item.bounds.top))
+  const maxRight = Math.max(...nodes.map((item) => item.bounds.left + item.bounds.width))
+  const maxBottom = Math.max(...nodes.map((item) => item.bounds.top + item.bounds.height))
+  const width = Math.max(1, maxRight - minLeft)
+  const height = Math.max(1, maxBottom - minTop)
+  const scale = canvasWidth / width
+  const canvasHeight = Math.max(220, Math.ceil(height * scale))
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Typography.Text type="secondary">
-        {useBoundsPreview
-          ? 'bounds preview'
-          : 'tree preview'}
-      </Typography.Text>
-      {useBoundsPreview ? (
-        <SnapshotBoundsPreview
-          actionMap={actionMap}
-          focusNode={focusNode}
-          nodes={boundedNodes}
-          onAction={onAction}
-        />
-      ) : (
-        <SnapshotTreePreview
-          actionMap={actionMap}
-          focusNode={focusNode}
-          nodes={nodes}
-          onAction={onAction}
-        />
-      )}
-    </Space>
-  )
-}
-
-const SnapshotBoundsPreview: FC<{
-  actionMap: Map<string, ActionTarget>
-  focusNode: (targetId: string) => void
-  nodes: SnapshotNode[]
-  onAction: (payload: Partial<ActionPayload>) => void
-}> = ({ actionMap, focusNode, nodes, onAction }) => {
-  const lefts = nodes.map((node) => node.bounds?.left ?? 0)
-  const tops = nodes.map((node) => node.bounds?.top ?? 0)
-  const rights = nodes.map((node) => (node.bounds?.left ?? 0) + (node.bounds?.width ?? 0))
-  const bottoms = nodes.map((node) => (node.bounds?.top ?? 0) + (node.bounds?.height ?? 0))
-  const minLeft = Math.min(...lefts)
-  const minTop = Math.min(...tops)
-  const sourceWidth = Math.max(...rights) - minLeft
-  const sourceHeight = Math.max(...bottoms) - minTop
-  const maxPreviewWidth = 760
-  const scale = Math.min(1, maxPreviewWidth / Math.max(sourceWidth, 1))
-
-  return (
-    <div style={{ overflowX: 'auto', paddingBottom: 8 }}>
-      <div
-        style={{
-          background: '#f5f5f5',
-          border: '1px solid #d9d9d9',
-          borderRadius: 12,
-          height: Math.max(sourceHeight * scale, 240),
-          position: 'relative',
-          width: Math.max(sourceWidth * scale, 320),
-        }}
-      >
-        {nodes.map((node, index) => {
-          const bounds = node.bounds
-          if (!bounds) {
-            return null
-          }
-          const actionTarget = node.id ? actionMap.get(node.id) : undefined
+    <div ref={shellRef} className="snapshot-preview-shell">
+      <div className="snapshot-preview-bar">
+        <Text type="secondary">
+          {(snapshot?.screen || snapshot?.summary?.screen || 'Unknown')} · {nodes.length} nodes
+        </Text>
+      </div>
+      <div className="snapshot-preview-canvas" style={{ height: canvasHeight }}>
+        {nodes.map((node) => {
+          const label = node.text || node.value || node.id
+          const typeLabel = node.type || node.role || 'Node'
+          const kind = (node.role || node.type || '').toLowerCase()
+          const isTextLike = kind === 'text' || kind === 'label'
+          const isContainer = kind === 'container' || kind === 'panel' || kind.includes('column') || kind.includes('row')
+          const scaledWidth = node.bounds.width * scale
+          const scaledHeight = node.bounds.height * scale
+          const showLabel = scaledWidth >= 18 && scaledHeight >= 8
+          const fontSize = Math.max(7, Math.min(14, Math.floor(scaledHeight * 0.5)))
           return (
             <button
-              key={node.id ?? String(index)}
-              onClick={() => {
-                if (node.id) {
-                  focusNode(node.id)
-                }
-                if (node.id && actionTarget) {
-                  onAction({
-                    action: actionTarget.actions[0]?.name,
-                    targetId: node.id,
-                  })
-                }
-              }}
+              key={node.id}
+              className={[
+                'snapshot-preview-node',
+                node.clickable ? 'snapshot-preview-node--clickable' : '',
+                isContainer ? 'snapshot-preview-node--container' : '',
+                isTextLike ? 'snapshot-preview-node--text' : '',
+              ].filter(Boolean).join(' ')}
               style={{
-                alignItems: 'flex-start',
+                left: (node.bounds.left - minLeft) * scale,
+                top: (node.bounds.top - minTop) * scale,
+                width: Math.max(scaledWidth, 12),
+                height: Math.max(scaledHeight, 10),
+                fontSize,
                 background: node.backgroundColor || previewBackgroundColor(node.type),
-                border: node.clickable ? '2px solid #1677ff' : '1px solid #8c8c8c',
-                borderRadius: 8,
-                color: node.contentColor || '#111',
-                cursor: node.id ? 'pointer' : 'default',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 4,
-                left: (bounds.left - minLeft) * scale,
-                minHeight: Math.max(bounds.height * scale, 22),
-                overflow: 'hidden',
-                padding: 6,
-                position: 'absolute',
-                textAlign: 'left',
-                top: (bounds.top - minTop) * scale,
-                width: Math.max(bounds.width * scale, 64),
+                color: node.contentColor || '#262626',
               }}
+              title={`${node.id} / ${typeLabel}${label ? ` / ${label}` : ''}`}
               type="button"
+              onClick={() => onFocusNode(node.id)}
             >
-              <span style={{ fontSize: 10, opacity: 0.7 }}>
-                {node.type}
-              </span>
-              <span style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.2 }}>
-                {previewNodeTitle(node)}
-              </span>
+              {showLabel ? (
+                <>
+                  {!isContainer ? <div className="snapshot-preview-node-label">{label}</div> : null}
+                  {!isTextLike && !isContainer ? <div className="snapshot-preview-node-meta">{typeLabel}</div> : null}
+                </>
+              ) : null}
             </button>
           )
         })}
@@ -999,270 +328,482 @@ const SnapshotBoundsPreview: FC<{
   )
 }
 
-const SnapshotTreePreview: FC<{
-  actionMap: Map<string, ActionTarget>
-  focusNode: (targetId: string) => void
-  nodes: SnapshotNode[]
-  onAction: (payload: Partial<ActionPayload>) => void
-}> = ({ actionMap, focusNode, nodes, onAction }) => {
-  const roots = buildPreviewTree(nodes)
-  return (
-    <Space direction="vertical" size="small" style={{ width: '100%' }}>
-      {roots.map((item) => (
-        <SnapshotTreeNodeView
-          actionMap={actionMap}
-          focusNode={focusNode}
-          key={item.key}
-          node={item}
-          onAction={onAction}
-        />
-      ))}
-    </Space>
-  )
-}
+const SnapshotTreeView: FC<{
+  snapshot: SnapshotResponse | null
+  onFocusNode: (targetId: string) => void
+}> = ({ snapshot, onFocusNode }) => {
+  const treeData = buildSnapshotTree(snapshot)
 
-const SnapshotTreeNodeView: FC<{
-  actionMap: Map<string, ActionTarget>
-  focusNode: (targetId: string) => void
-  node: PreviewTreeNode
-  onAction: (payload: Partial<ActionPayload>) => void
-}> = ({ actionMap, focusNode, node, onAction }) => {
-  const { children, key, node: current } = node
-  const actionTarget = current.id ? actionMap.get(current.id) : undefined
-  const currentId = current.id
+  if (!treeData.length) {
+    return <Text type="secondary">no snapshot tree</Text>
+  }
+
+  const toAntdTreeNode = (node: SnapshotTreeNode): DataNode => ({
+    key: node.id,
+    title: (
+      <button type="button" className="snapshot-tree-node-button" onClick={() => onFocusNode(node.id)}>
+        <Space size={4} wrap>
+          <Text code>{node.kind}</Text>
+          <Text strong>{node.id}</Text>
+          {node.label ? <Text type="secondary">{node.label}</Text> : null}
+          {node.clickable ? <Tag color="blue">clickable</Tag> : null}
+        </Space>
+      </button>
+    ),
+    children: node.children.map(toAntdTreeNode),
+  })
 
   return (
-    <div
-      key={key}
-      style={{
-        border: '1px solid #d9d9d9',
-        borderLeft: current.clickable ? '3px solid #1677ff' : '1px solid #d9d9d9',
-        borderRadius: 10,
-        padding: 12,
-      }}
-    >
-      <Flex align="center" gap={8} justify="space-between" wrap>
-        <Space size={6} wrap>
-          <Tag>{current.type ?? 'Unknown'}</Tag>
-          {current.role ? <Tag color="cyan">{current.role}</Tag> : null}
-          {current.id ? <Tag color="geekblue">{current.id}</Tag> : null}
-          <Typography.Text strong>{previewNodeTitle(current)}</Typography.Text>
-        </Space>
-        <Space size={6} wrap>
-          {currentId ? (
-            <Button size="small" onClick={() => focusNode(currentId)}>
-              focus
-            </Button>
-          ) : null}
-          {currentId && actionTarget ? (
-            <Button
-              size="small"
-              type="primary"
-              onClick={() =>
-                onAction({
-                  action: actionTarget.actions[0]?.name,
-                  targetId: currentId,
-                })
-              }
-            >
-              {actionTarget.actions[0]?.name ?? 'action'}
-            </Button>
-          ) : null}
-        </Space>
-      </Flex>
-      {children.length > 0 ? (
-        <div style={{ marginLeft: 16, marginTop: 12 }}>
-          <Space direction="vertical" size="small" style={{ width: '100%' }}>
-            {children.map((child) => (
-              <SnapshotTreeNodeView
-                actionMap={actionMap}
-                focusNode={focusNode}
-                key={child.key}
-                node={child}
-                onAction={onAction}
-              />
-            ))}
-          </Space>
-        </div>
-      ) : null}
+    <div className="snapshot-tree-shell">
+      <Tree blockNode defaultExpandAll selectable={false} showLine treeData={treeData.map(toAntdTreeNode)} />
     </div>
   )
 }
 
-const renderTagList = (values?: Array<string | null | undefined>) => {
-  if (!values || values.length === 0) {
-    return '-'
+const App: FC = () => {
+  const { message } = AntdApp.useApp()
+  const [help, setHelp] = useState<HelpResponse | null>(null)
+  const [actions, setActions] = useState<ActionCatalogResponse | null>(null)
+  const [logs, setLogs] = useState<LogsResponse | null>(null)
+  const [stateData, setStateData] = useState<StateResponse | null>(null)
+  const [snapshot, setSnapshot] = useState<SnapshotResponse | null>(null)
+  const [actionResult, setActionResult] = useState<ActionResponse | LogsClearResponse | null>(null)
+  const [actionQueryForm] = Form.useForm()
+  const [manualActionForm] = Form.useForm()
+  const [logsForm] = Form.useForm()
+  const [stateForm] = Form.useForm()
+  const [snapshotForm] = Form.useForm()
+  const actionQueryTargetId = Form.useWatch('targetId', actionQueryForm)
+  const actionQueryAction = Form.useWatch('action', actionQueryForm)
+  const manualActionTargetId = Form.useWatch('targetId', manualActionForm)
+  const manualActionAction = Form.useWatch('action', manualActionForm)
+
+  const actionTargetIdOptions = toOptions([
+    ...(actions?.items || []).map((item) => item.targetId),
+    ...(stateData?.summary?.targetStateTargets || []),
+  ])
+  const actionsByTargetId = (actions?.items || []).reduce<Record<string, string[]>>((result, item) => {
+    result[item.targetId] = item.actions.map((action) => action.name)
+    return result
+  }, {})
+  const actionNameOptions = toOptions((actions?.items || []).flatMap((item) => item.actions.map((action) => action.name)))
+  const actionQueryActionOptions = actionQueryTargetId ? toOptions(actionsByTargetId[actionQueryTargetId] || []) : actionNameOptions
+  const manualActionOptions = manualActionTargetId ? toOptions(actionsByTargetId[manualActionTargetId] || []) : actionNameOptions
+  const screenOptions = toOptions([
+    help?.screenName,
+    snapshot?.screen,
+    snapshot?.summary?.screen,
+    ...(actions?.items || []).map((item) => item.screen || undefined),
+    ...(logs?.items || []).map((item) => item.data?.screen),
+  ])
+  const logEventOptions = toOptions([
+    ...Object.keys(logs?.summary?.eventCountsTop || {}),
+    ...(logs?.items || []).map((item) => item.event),
+  ])
+  const logLevelOptions = toOptions([
+    ...Object.keys(logs?.summary?.levelCounts || {}),
+    ...(logs?.items || []).map((item) => item.level),
+  ])
+  const logSourceOptions = toOptions([
+    ...Object.keys(logs?.summary?.sourceCounts || {}),
+    ...(logs?.items || []).map((item) => item.source),
+  ])
+  const logTargetIdOptions = toOptions([
+    ...(logs?.items || []).map((item) => item.targetId),
+    ...(actions?.items || []).map((item) => item.targetId),
+  ])
+  const stateKeyOptions = toOptions((stateData?.summary?.appStateKeys || []).map((item) => item.key))
+  const stateTargetIdOptions = toOptions([
+    ...(stateData?.summary?.targetStateTargets || []),
+    ...(actions?.items || []).map((item) => item.targetId),
+  ])
+  const snapshotTargetIdOptions = toOptions([
+    ...(snapshot?.nodes || []).map((item) => item.id),
+    ...(actions?.items || []).map((item) => item.targetId),
+  ])
+  const snapshotTypeOptions = toOptions([
+    ...(snapshot?.summary?.typeCounts ? Object.keys(snapshot.summary.typeCounts) : []),
+    ...(snapshot?.nodes || []).map((item) => item.type),
+  ])
+
+  const actionColumns: ColumnsType<ActionCatalogResponse['items'][number]> = [
+    { title: 'targetId', dataIndex: 'targetId', width: 180, render: (value) => <Text strong>{value}</Text> },
+    { title: 'type', dataIndex: 'targetType', width: 140, render: (value) => value ? <Tag>{value}</Tag> : '-' },
+    { title: 'screen', dataIndex: 'screen', width: 140, render: (value) => value ? <Tag>{value}</Tag> : '-' },
+    {
+      title: 'actions',
+      key: 'actions',
+      render: (_, item) => (
+        <Space size={4} wrap>
+          {item.actions.map((action) => (
+            <Button size="small" key={`${item.targetId}-${action.name}`} onClick={() => void runAction(action.example)}>
+              {action.name}
+            </Button>
+          ))}
+        </Space>
+      ),
+    },
+  ]
+
+  const snapshotColumns: ColumnsType<NonNullable<SnapshotResponse['nodes']>[number]> = [
+    { title: 'id', dataIndex: 'id', width: 180, render: (value) => value || '-' },
+    { title: 'parentId', dataIndex: 'parentId', width: 160, render: (value) => value || '-' },
+    { title: 'type', dataIndex: 'type', width: 120, render: (value) => value || '-' },
+    { title: 'text', dataIndex: 'text', width: 180, render: (value) => value || '-' },
+    { title: 'role', dataIndex: 'role', width: 120, render: (value) => value || '-' },
+    { title: 'visible', dataIndex: 'visible', width: 88, render: (value) => String(value) },
+    { title: 'enabled', dataIndex: 'enabled', width: 88, render: (value) => String(value) },
+    { title: 'clickable', dataIndex: 'clickable', width: 92, render: (value) => String(value) },
+    { title: 'value', dataIndex: 'value', width: 140, render: (value) => value || '-' },
+    { title: 'bounds', dataIndex: 'bounds', width: 220, render: (value) => value ? `${value.left}, ${value.top}, ${value.width}, ${value.height}` : '-' },
+    { title: 'extra', dataIndex: 'extra', width: 240, render: (value) => <JsonPreviewer value={value || {}} maxHeight={140} /> },
+  ]
+
+  async function loadHelp() {
+    const result = await fetchJSON<HelpResponse>('/help')
+    setHelp(result)
+    return result
   }
-  return (
-    <Space wrap>
-      {values.filter(Boolean).map((value) => (
-        <Tag key={value}>{value}</Tag>
-      ))}
-    </Space>
-  )
-}
 
-const renderCountTags = (value?: Record<string, number>) => {
-  if (!value || Object.keys(value).length === 0) {
-    return '-'
+  async function loadActions(values?: Record<string, unknown>) {
+    const formValues = values ?? actionQueryForm.getFieldsValue()
+    const result = await fetchJSON<ActionCatalogResponse>(`/action${buildQuery(formValues)}`)
+    setActions(result)
+    return result
   }
-  return (
-    <Space wrap>
-      {Object.entries(value).map(([key, count]) => (
-        <Tag key={key}>{`${key}:${count}`}</Tag>
-      ))}
-    </Space>
-  )
-}
 
-const renderNullableText = (value?: string | null) => value || '-'
-
-const renderMethodTag = (value: string) => {
-  const color = value === 'POST' ? 'purple' : value === 'DELETE' ? 'red' : 'blue'
-  return <Tag color={color}>{value}</Tag>
-}
-
-const renderLevelTag = (value: string) => {
-  const colorByLevel: Record<string, string> = {
-    debug: 'default',
-    info: 'blue',
-    warn: 'orange',
-    error: 'red',
+  async function loadLogs(values?: Record<string, unknown>) {
+    const formValues = values ?? logsForm.getFieldsValue()
+    const result = await fetchJSON<LogsResponse>(`/logs${buildQuery(formValues)}`)
+    setLogs(result)
+    return result
   }
-  return <Tag color={colorByLevel[value] ?? 'default'}>{value}</Tag>
-}
 
-const renderSourceTag = (value: string) => {
-  const colorBySource: Record<string, string> = {
-    human: 'green',
-    ai: 'geekblue',
+  async function loadState(values?: Record<string, unknown>) {
+    const formValues = values ?? stateForm.getFieldsValue()
+    const result = await fetchJSON<StateResponse>(`/state${buildQuery(formValues)}`)
+    setStateData(result)
+    return result
   }
-  return <Tag color={colorBySource[value] ?? 'default'}>{value}</Tag>
-}
 
-const renderBooleanTag = (value?: boolean) => {
-  if (value == null) {
-    return '-'
+  async function loadSnapshot(values?: Record<string, unknown>) {
+    const formValues = normalizeSnapshotQuery(values ?? snapshotForm.getFieldsValue())
+    const result = await fetchJSON<SnapshotResponse>(`/snapshot${buildQuery(formValues)}`)
+    setSnapshot(result)
+    return result
   }
-  return <Tag color={value ? 'green' : 'default'}>{String(value)}</Tag>
-}
 
-const buildSearch = (value: Record<string, string | number | boolean | undefined>) => {
-  const params = new URLSearchParams()
-  Object.entries(value).forEach(([key, raw]) => {
-    if (raw == null) {
-      return
+  async function loadSnapshotSummary() {
+    const result = await fetchJSON<SnapshotResponse>('/snapshot')
+    setSnapshot(result)
+    return result
+  }
+
+  async function refreshAll() {
+    try {
+      await Promise.all([loadHelp(), loadActions({}), loadLogs({}), loadState({}), loadSnapshot()])
+    } catch (error) {
+      message.error(String((error as Error).message || error))
     }
-    const normalized = String(raw).trim()
-    if (!normalized) {
-      return
+  }
+
+  async function runAction(payload: ActionRequest) {
+    try {
+      const result = await fetchJSON<ActionResponse>('/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      setActionResult(result)
+      message.success(result.message)
+      await Promise.all([loadHelp(), loadLogs({}), loadState({}), loadSnapshot()])
+    } catch (error) {
+      message.error(String((error as Error).message || error))
     }
-    params.set(key, normalized)
-  })
-  const query = params.toString()
-  return query ? `?${query}` : ''
-}
-
-const stripEmpty = <T extends object>(value: T): T => {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, item]) => item != null && String(item).trim() !== ''),
-  ) as T
-}
-
-const requestJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(path, init)
-  const text = await response.text()
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} ${text}`)
   }
-  return JSON.parse(text) as T
-}
 
-const toErrorMessage = (error: unknown) => {
-  if (error instanceof Error) {
-    return error.message
+  async function runManualAction() {
+    try {
+      const values = await manualActionForm.validateFields()
+      const args = values.args ? (JSON.parse(values.args) as Record<string, string>) : {}
+      await runAction({
+        action: values.action,
+        targetId: values.targetId,
+        text: values.text || undefined,
+        dx: values.dx ?? undefined,
+        dy: values.dy ?? undefined,
+        source: values.source || undefined,
+        args,
+      })
+    } catch (error) {
+      message.error(String((error as Error).message || error))
+    }
   }
-  return String(error)
+
+  async function clearLogs() {
+    try {
+      const result = await fetchJSON<LogsClearResponse>('/logs', { method: 'DELETE' })
+      setActionResult(result)
+      message.success(result.message)
+      await Promise.all([loadHelp(), loadLogs({})])
+    } catch (error) {
+      message.error(String((error as Error).message || error))
+    }
+  }
+
+  function focusSnapshotNode(targetId: string) {
+    snapshotForm.setFieldsValue({
+      targetId,
+      scope: 'self',
+      fields: snapshotPreviewFields,
+    })
+    stateForm.setFieldsValue({
+      targetId,
+      scope: 'target',
+    })
+    void Promise.all([
+      loadSnapshot({
+        ...snapshotForm.getFieldsValue(),
+        targetId,
+        scope: 'self',
+        fields: snapshotPreviewFields,
+      }),
+      loadState({
+        ...stateForm.getFieldsValue(),
+        targetId,
+        scope: 'target',
+      }),
+    ])
+  }
+
+  useEffect(() => {
+    actionQueryForm.setFieldsValue({})
+    manualActionForm.setFieldsValue({ source: 'human', args: '{}' })
+    logsForm.setFieldsValue({ limit: 20 })
+    stateForm.setFieldsValue({})
+    snapshotForm.setFieldsValue({ limit: 200, fields: snapshotPreviewFields, types: [] })
+    void refreshAll()
+  }, [])
+
+  useEffect(() => {
+    if (!actionQueryAction) return
+    const matched = actionQueryActionOptions.some((item) => item.value === actionQueryAction)
+    if (!matched) {
+      actionQueryForm.setFieldValue('action', undefined)
+    }
+  }, [actionQueryAction, actionQueryActionOptions, actionQueryForm])
+
+  useEffect(() => {
+    if (!manualActionAction) return
+    const matched = manualActionOptions.some((item) => item.value === manualActionAction)
+    if (!matched) {
+      manualActionForm.setFieldValue('action', undefined)
+    }
+  }, [manualActionAction, manualActionForm, manualActionOptions])
+
+  return (
+    <Layout>
+      <Header style={{ background: '#fff', borderBottom: '1px solid #f0f0f0', paddingInline: 16, height: 56 }}>
+        <Space direction="vertical" size={0}>
+          <Title level={4} style={{ margin: 0, lineHeight: '32px', paddingTop: 6 }}>
+            Freewind Debug Console
+          </Title>
+          <Text type="secondary">
+            {help ? `${help.appName} / ${help.screenName} / ${help.serverTime}` : 'loading...'}
+          </Text>
+        </Space>
+      </Header>
+      <Content className="page">
+        <Space direction="vertical" size={8} style={{ display: 'flex' }}>
+          <Card size="small">
+            <Space size={8} wrap>
+              <Button size="small" type="primary" onClick={() => void refreshAll()}>Refresh All</Button>
+              <Button size="small" onClick={() => void loadActions({})}>Refresh Actions</Button>
+              <Button size="small" danger onClick={() => void clearLogs()}>Clear Logs</Button>
+              <JsonInfoButton title="Help JSON" value={help} />
+            </Space>
+          </Card>
+
+          <Flex gap={8} wrap>
+            <Card size="small" className="stat-card"><Statistic title="Action Targets" value={help?.counts.actionTargetCount ?? 0} /></Card>
+            <Card size="small" className="stat-card"><Statistic title="Logs" value={help?.counts.logCount ?? 0} /></Card>
+            <Card size="small" className="stat-card"><Statistic title="State Keys" value={help?.counts.stateKeyCount ?? 0} /></Card>
+            <Card size="small" className="stat-card"><Statistic title="Snapshot Nodes" value={help?.counts.snapshotNodeCount ?? 0} /></Card>
+          </Flex>
+
+          <Tabs
+            size="small"
+            items={[
+              {
+                key: 'logs',
+                label: 'Logs',
+                children: (
+                  <Space direction="vertical" size={8} style={{ display: 'flex' }}>
+                    <Card size="small" title="Query">
+                      <Form form={logsForm} layout="vertical" size="small">
+                        <Flex vertical gap="small">
+                          <Flex gap="small" wrap>
+                            <LabeledField name="event" label="event" className="query-cell"><Select {...commonSelectProps} allowClear options={logEventOptions} /></LabeledField>
+                            <LabeledField name="level" label="level" className="query-cell"><Select {...commonSelectProps} allowClear options={logLevelOptions} /></LabeledField>
+                            <LabeledField name="source" label="source" className="query-cell"><Select {...commonSelectProps} allowClear options={logSourceOptions} /></LabeledField>
+                            <LabeledField name="targetId" label="targetId" className="query-cell"><Select {...commonSelectProps} allowClear options={logTargetIdOptions} /></LabeledField>
+                            <LabeledField name="screen" label="screen" className="query-cell"><Select {...commonSelectProps} allowClear options={screenOptions} /></LabeledField>
+                            <LabeledField name="from" label="from" className="query-cell"><Input size="small" style={compactInputStyle} /></LabeledField>
+                            <LabeledField name="to" label="to" className="query-cell"><Input size="small" style={compactInputStyle} /></LabeledField>
+                            <LabeledField name="limit" label="limit" className="query-cell query-cell--number"><InputNumber size="small" min={1} style={compactNumberStyle} /></LabeledField>
+                            <LabeledField name="keyword" label="keyword" className="query-cell"><Input size="small" style={compactInputStyle} /></LabeledField>
+                          </Flex>
+                          <Space size={8} wrap>
+                            <Button size="small" type="primary" onClick={() => void loadLogs()}>Query Logs</Button>
+                            <Button size="small" onClick={() => void loadLogs({})}>Summary</Button>
+                            <Button size="small" danger onClick={() => void clearLogs()}>Delete Logs</Button>
+                          </Space>
+                        </Flex>
+                      </Form>
+                    </Card>
+
+                    <Card size="small" title="Table" extra={<JsonInfoButton title="Logs JSON" value={logs} />}>
+                      <Table size="small" rowKey="seq" columns={logColumns} dataSource={logs?.items || []} pagination={false} scroll={{ x: 1320 }} />
+                    </Card>
+                  </Space>
+                ),
+              },
+              {
+                key: 'action',
+                label: 'Action',
+                children: (
+                  <Space direction="vertical" size={8} style={{ display: 'flex' }}>
+                    <Card size="small" title="Query">
+                      <Form form={actionQueryForm} layout="vertical" size="small">
+                        <Flex vertical gap="small">
+                          <Flex gap="small" wrap>
+                            <LabeledField name="targetId" label="targetId" className="query-cell"><Select {...commonSelectProps} allowClear options={actionTargetIdOptions} /></LabeledField>
+                            <LabeledField name="action" label="action" className="query-cell"><Select {...commonSelectProps} allowClear options={actionQueryActionOptions} /></LabeledField>
+                            <LabeledField name="screen" label="screen" className="query-cell"><Select {...commonSelectProps} allowClear options={screenOptions} /></LabeledField>
+                          </Flex>
+                          <Button size="small" type="primary" onClick={() => void loadActions()}>Load Actions</Button>
+                        </Flex>
+                      </Form>
+                    </Card>
+
+                    <Card size="small" title="Action Table" extra={<JsonInfoButton title="Action Catalog JSON" value={actions} />}>
+                      <Table size="small" rowKey="targetId" columns={actionColumns} dataSource={actions?.items || []} pagination={false} scroll={{ x: 760 }} />
+                    </Card>
+
+                    <Card size="small" title="Manual Action">
+                      <Form form={manualActionForm} layout="vertical" size="small">
+                        <Flex vertical gap="small">
+                          <Flex gap="small" wrap>
+                            <LabeledField name="targetId" label="targetId" className="query-cell" rules={[{ required: true }]}><Select {...commonSelectProps} options={actionTargetIdOptions} /></LabeledField>
+                            <LabeledField name="action" label="action" className="query-cell" rules={[{ required: true }]}><Select {...commonSelectProps} options={manualActionOptions} /></LabeledField>
+                            <LabeledField name="source" label="source" className="query-cell"><Input size="small" style={compactInputStyle} /></LabeledField>
+                            <LabeledField name="text" label="text" className="query-cell"><Input size="small" style={compactInputStyle} /></LabeledField>
+                            <LabeledField name="dx" label="dx" className="query-cell query-cell--number"><InputNumber size="small" style={compactNumberStyle} /></LabeledField>
+                            <LabeledField name="dy" label="dy" className="query-cell query-cell--number"><InputNumber size="small" style={compactNumberStyle} /></LabeledField>
+                          </Flex>
+                          <LabeledField name="args" label="args JSON"><Input.TextArea rows={4} /></LabeledField>
+                          <Space size={8}>
+                            <Button size="small" type="primary" onClick={() => void runManualAction()}>Send Action</Button>
+                          </Space>
+                        </Flex>
+                      </Form>
+                    </Card>
+
+                    <Card size="small" title="Latest Result">
+                      {renderJson(actionResult)}
+                    </Card>
+                  </Space>
+                ),
+              },
+              {
+                key: 'state',
+                label: 'State',
+                children: (
+                  <Space direction="vertical" size={8} style={{ display: 'flex' }}>
+                    <Card size="small" title="Query">
+                      <Form form={stateForm} layout="vertical" size="small">
+                        <Flex vertical gap="small">
+                          <Flex gap="small" wrap>
+                            <LabeledField name="keys" label="keys" className="query-cell query-cell--wide"><Select {...commonSelectProps} mode="multiple" allowClear options={stateKeyOptions} /></LabeledField>
+                            <LabeledField name="targetId" label="targetId" className="query-cell"><Select {...commonSelectProps} allowClear options={stateTargetIdOptions} /></LabeledField>
+                            <LabeledField name="scope" label="scope" className="query-cell"><Select {...commonSelectProps} allowClear options={stateScopeOptions} /></LabeledField>
+                          </Flex>
+                          <Space size={8}>
+                            <Button size="small" type="primary" onClick={() => void loadState()}>Query State</Button>
+                            <Button size="small" onClick={() => void loadState({})}>Summary</Button>
+                          </Space>
+                        </Flex>
+                      </Form>
+                    </Card>
+
+                    <Card size="small" title="JSON">
+                      {renderJson(stateData)}
+                    </Card>
+                  </Space>
+                ),
+              },
+              {
+                key: 'snapshot',
+                label: 'Snapshot',
+                children: (
+                  <Space direction="vertical" size={8} style={{ display: 'flex' }}>
+                    <Card size="small" title="Query">
+                      <Form form={snapshotForm} layout="vertical" size="small">
+                        <Flex vertical gap="small">
+                          <Flex gap="small" wrap>
+                            <LabeledField name="targetId" label="targetId" className="query-cell"><Select {...commonSelectProps} allowClear options={snapshotTargetIdOptions} /></LabeledField>
+                            <LabeledField name="scope" label="scope" className="query-cell"><Select {...commonSelectProps} allowClear options={snapshotScopeOptions} /></LabeledField>
+                            <LabeledField name="depth" label="depth" className="query-cell query-cell--number"><InputNumber size="small" style={compactNumberStyle} /></LabeledField>
+                            <LabeledField name="types" label="types" className="query-cell query-cell--wide"><Select {...commonSelectProps} mode="multiple" allowClear options={snapshotTypeOptions} /></LabeledField>
+                            <LabeledField name="textKeyword" label="textKeyword" className="query-cell"><Input size="small" style={compactInputStyle} /></LabeledField>
+                            <LabeledField name="fields" label="fields" className="query-cell query-cell--wide"><Input size="small" style={compactInputStyle} /></LabeledField>
+                            <LabeledField name="visible" label="visible" className="query-cell"><Select {...commonSelectProps} allowClear options={triStateOptions} /></LabeledField>
+                            <LabeledField name="enabled" label="enabled" className="query-cell"><Select {...commonSelectProps} allowClear options={triStateOptions} /></LabeledField>
+                            <LabeledField name="clickable" label="clickable" className="query-cell"><Select {...commonSelectProps} allowClear options={triStateOptions} /></LabeledField>
+                            <LabeledField name="limit" label="limit" className="query-cell query-cell--number"><InputNumber size="small" style={compactNumberStyle} /></LabeledField>
+                          </Flex>
+                          <Space size={8}>
+                            <Button size="small" type="primary" onClick={() => void loadSnapshot()}>Query Snapshot</Button>
+                            <Button size="small" onClick={() => void loadSnapshotSummary()}>Summary</Button>
+                          </Space>
+                        </Flex>
+                      </Form>
+                    </Card>
+
+                    <Flex gap={8} wrap align="start">
+                      <Card size="small" title="Preview" extra={<JsonInfoButton title="Snapshot JSON" value={snapshot} maxHeight={360} />} className="snapshot-pane-card snapshot-pane-card--preview">
+                        <SnapshotPreview snapshot={snapshot} onFocusNode={focusSnapshotNode} />
+                      </Card>
+                      <Card size="small" title="Tree" className="snapshot-pane-card snapshot-pane-card--tree">
+                        <SnapshotTreeView snapshot={snapshot} onFocusNode={focusSnapshotNode} />
+                      </Card>
+                    </Flex>
+
+                    <Card size="small" title="Nodes Table">
+                      <Table size="small" rowKey={(record, index) => record.id || String(index)} columns={snapshotColumns} dataSource={snapshot?.nodes || []} pagination={false} scroll={{ x: 1680 }} />
+                    </Card>
+                  </Space>
+                ),
+              },
+              {
+                key: 'help',
+                label: 'Help',
+                children: (
+                  <Space direction="vertical" size={8} style={{ display: 'flex' }}>
+                    <Card size="small" title="JSON">
+                      {renderJson(help)}
+                    </Card>
+                  </Space>
+                ),
+              },
+            ]}
+          />
+          <Divider />
+          <Text type="secondary">Vite + TypeScript + Antd build output served from Android debug server assets.</Text>
+        </Space>
+      </Content>
+    </Layout>
+  )
 }
 
 export default App
-
-const buildPreviewTree = (nodes: SnapshotNode[]): PreviewTreeNode[] => {
-  const items = nodes.map((node, index) => ({
-    children: [] as PreviewTreeNode[],
-    key: node.id ?? `node-${index}`,
-    node,
-  }))
-  const byId = new Map(items.map((item) => [item.node.id, item] as const))
-  const roots: PreviewTreeNode[] = []
-
-  items.forEach((item) => {
-    const parentId = item.node.parentId
-    if (!parentId) {
-      roots.push(item)
-      return
-    }
-    const parent = byId.get(parentId)
-    if (!parent) {
-      roots.push(item)
-      return
-    }
-    parent.children.push(item)
-  })
-
-  return roots
-}
-
-const previewNodeTitle = (node: SnapshotNode) => {
-  return (
-    node.text ||
-    node.value ||
-    node.extra?.label ||
-    node.id ||
-    node.type ||
-    'node'
-  )
-}
-
-const previewBackgroundColor = (type?: string) => {
-  switch (type) {
-    case 'Button':
-      return '#e6f4ff'
-    case 'TextField':
-      return '#ffffff'
-    case 'Switch':
-      return '#f6ffed'
-    case 'Card':
-      return '#fafafa'
-    default:
-      return '#f5f5f5'
-  }
-}
-
-const WrapGrid: FC<{ children: ReactNode }> = ({ children }) => {
-  return (
-    <Flex
-      gap={16}
-      style={{ width: '100%' }}
-      wrap
-    >
-      {children}
-    </Flex>
-  )
-}
-
-const GridItem: FC<{
-  children: ReactNode
-  mdBasis: string
-}> = ({ children, mdBasis }) => {
-  return (
-    <div
-      style={{
-        flex: `1 1 ${mdBasis}`,
-        minWidth: 220,
-      }}
-    >
-      {children}
-    </div>
-  )
-}

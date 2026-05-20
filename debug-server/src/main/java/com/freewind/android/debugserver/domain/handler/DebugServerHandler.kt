@@ -55,7 +55,7 @@ class DebugServerHandler(
     suspend fun performAction(request: DebugActionRequest): DebugActionResult {
         val result = actionBus.dispatch(request)
         store.recordOperation(
-            source = DebugOperationSource.AI,
+            source = DebugOperationSource.fromWireValue(request.source) ?: DebugOperationSource.AI,
             action = request.action,
             targetId = request.targetId,
             text = request.text,
@@ -63,6 +63,7 @@ class DebugServerHandler(
             dy = request.dy,
             success = result.ok,
             message = result.message,
+            extra = request.args,
         )
         return result
     }
