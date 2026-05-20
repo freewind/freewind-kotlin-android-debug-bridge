@@ -119,6 +119,17 @@ class DebugViewRegistry(
         }
     }
 
+    // App-side cleanup hook.
+    // Call this when a screen leaves the foreground so stale targets stop leaking.
+    fun release(bridge: DebugBridge) {
+        val bus = bridge.actionBusInternal()
+        synchronized(lock) {
+            fallbackActionIds.forEach(bus::unregisterFallbackAction)
+            fallbackActionIds.clear()
+            indexedNodes.clear()
+        }
+    }
+
     private fun buildNodes(
         view: View,
         parentId: String?,
