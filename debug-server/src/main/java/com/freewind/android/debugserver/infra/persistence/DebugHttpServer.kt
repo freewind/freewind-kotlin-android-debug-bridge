@@ -15,6 +15,7 @@ import com.freewind.android.debugserver.domain.store.DebugServerStore
 import io.ktor.http.ContentType
 import io.ktor.http.Parameters
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.ApplicationEngine
@@ -39,6 +40,7 @@ class DebugHttpServer(
     private val store: DebugServerStore,
     private val handler: DebugServerHandler,
 ) {
+    private val actionTimeoutMs = 3_000L
     private var server: ApplicationEngine? = null
 
     fun start() {
@@ -78,36 +80,31 @@ class DebugHttpServer(
                 )
             }
             get("/help") {
-                call.respondText(
-                    buildHelpJson(),
-                    ContentType.Application.Json,
-                )
+                call.respondJsonSafely { buildHelpJson() }
             }
             get("/action") {
-                call.respondText(
-                    buildActionJson(call.request.queryParameters),
-                    ContentType.Application.Json,
-                )
+                call.respondJsonSafely { buildActionJson(call.request.queryParameters) }
             }
             post("/action") {
-                val request = parseActionRequest(call.receiveText())
-                val result = handler.performAction(request)
-                call.respondText(
-                    result.toHttpJsonString(request),
-                    ContentType.Application.Json,
-                )
+                call.respondJsonSafely {
+                    val request = parseActionRequest(call.receiveText())
+                    val result = handler.performAction(
+                        request = request,
+                        timeoutMs = actionTimeoutMs,
+                    )
+                    result.toHttpJsonString(request)
+                }
             }
             get("/logs") {
                 val queryParams = call.request.queryParameters
-                call.respondText(
-                    if (queryParams.hasEntries()) buildLogsQueryJson(queryParams) else buildLogsSummaryJson(),
-                    ContentType.Application.Json,
-                )
+                call.respondJsonSafely {
+                    if (queryParams.hasEntries()) buildLogsQueryJson(queryParams) else buildLogsSummaryJson()
+                }
             }
             delete("/logs") {
                 val deletedCount = store.operations().value.size
                 store.clearOperations()
-                call.respondText(
+                call.respondJsonSafely {
                     // 这里是 web console 与外部 AI 共用协议。
                     // 若字段改名/删字段，必须同步：
                     // 1. web/src/types.ts
@@ -119,25 +116,36 @@ class DebugHttpServer(
                         put("clearedCount", deletedCount)
                         put("ok", true)
                         put("deletedCount", deletedCount)
-                    }.toString(),
-                    ContentType.Application.Json,
-                )
+                    }.toString()
+                }
             }
             get("/state") {
                 val queryParams = call.request.queryParameters
-                call.respondText(
-                    if (queryParams.hasEntries()) buildStateQueryJson(queryParams) else buildStateSummaryJson(),
-                    ContentType.Application.Json,
-                )
+                call.respondJsonSafely {
+                    if (queryParams.hasEntries()) buildStateQueryJson(queryParams) else buildStateSummaryJson()
+                }
             }
             get("/snapshot") {
                 val queryParams = call.request.queryParameters
-                call.respondText(
-                    if (queryParams.hasEntries()) buildSnapshotQueryJson(queryParams) else buildSnapshotSummaryJson(),
-                    ContentType.Application.Json,
-                )
+                call.respondJsonSafely {
+                    if (queryParams.hasEntries()) buildSnapshotQueryJson(queryParams) else buildSnapshotSummaryJson()
+                }
             }
         }
+    }
+
+    private suspend fun ApplicationCall.respondJsonSafely(
+        buildBody: suspend () -> String,
+    ) {
+        val payload = runCatching {
+            buildBody()
+        }.getOrElse { error ->
+            buildRouteErrorJson(error)
+        }
+        respondText(
+            payload,
+            ContentType.Application.Json,
+        )
     }
 
     private fun buildHelpJson(): String {
@@ -656,6 +664,17 @@ class DebugHttpServer(
             put("message", message)
             put("action", request.action)
             putOrNull("targetId", request.targetId)
+        }.toString()
+    }
+
+    private fun buildRouteErrorJson(error: Throwable): String {
+        val errorType = error::class.java.simpleName.ifBlank { "Throwable" }
+        val message = error.message.orEmpty().trim()
+        return JSONObject().apply {
+            put("ok", false)
+            put("accepted", false)
+            put("errorType", errorType)
+            put("message", if (message.isBlank()) "route error: $errorType" else "route error: $errorType: $message")
         }.toString()
     }
 

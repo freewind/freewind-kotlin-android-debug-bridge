@@ -11,6 +11,8 @@ import com.freewind.android.debugserver.domain.models.DebugSnapshot
 import com.freewind.android.debugserver.domain.models.DebugSnapshotQuery
 import com.freewind.android.debugserver.domain.store.DebugServerStore
 import com.freewind.android.debugserver.infra.system.DebugActionBus
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 
 // 编排层。
 class DebugServerHandler(
@@ -52,8 +54,29 @@ class DebugServerHandler(
         )
     }
 
-    suspend fun performAction(request: DebugActionRequest): DebugActionResult {
-        val result = actionBus.dispatch(request)
+    suspend fun performAction(
+        request: DebugActionRequest,
+        timeoutMs: Long? = null,
+    ): DebugActionResult {
+        val result = try {
+            if (timeoutMs == null) {
+                actionBus.dispatch(request)
+            } else {
+                withTimeout(timeoutMs) {
+                    actionBus.dispatch(request)
+                }
+            }
+        } catch (_: TimeoutCancellationException) {
+            DebugActionResult(
+                ok = false,
+                message = "action timeout after ${timeoutMs ?: 0L}ms",
+            )
+        } catch (error: Throwable) {
+            DebugActionResult(
+                ok = false,
+                message = buildActionErrorMessage(error),
+            )
+        }
         store.recordOperation(
             source = DebugOperationSource.fromWireValue(request.source) ?: DebugOperationSource.AI,
             action = request.action,
@@ -66,6 +89,16 @@ class DebugServerHandler(
             extra = request.args,
         )
         return result
+    }
+
+    private fun buildActionErrorMessage(error: Throwable): String {
+        val simpleName = error::class.java.simpleName.ifBlank { "Throwable" }
+        val message = error.message.orEmpty().trim()
+        return if (message.isBlank()) {
+            "action error: $simpleName"
+        } else {
+            "action error: $simpleName: $message"
+        }
     }
 
     fun querySnapshot(query: DebugSnapshotQuery): DebugSnapshot {
