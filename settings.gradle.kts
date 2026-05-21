@@ -14,6 +14,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "freewind-android-debug-server"
+rootProject.name = "freewind-android-debug-bridge"
 include(":demo-app")
-include(":debug-server")
+include(":debug-bridge")

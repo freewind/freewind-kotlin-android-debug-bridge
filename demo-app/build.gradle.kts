@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.freewind.android.debugserver.demo"
+    namespace = "com.freewind.android.debugbridge.demo"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.freewind.android.debugserver.demo"
+        applicationId = "com.freewind.android.debugbridge.demo"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
@@ -43,7 +43,7 @@ android {
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.01.01")
 
-    implementation(project(":debug-server"))
+    implementation(project(":debug-bridge"))
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.10.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
