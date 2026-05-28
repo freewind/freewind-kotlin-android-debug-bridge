@@ -49,7 +49,7 @@ data class DebugViewSnapshot(
 )
 
 class DebugViewRegistry(
-    @param:IdRes private val tagKey: Int = R.id.debug_server_view_spec_tag,
+    @param:IdRes private val tagKey: Int = R.id.debug_bridge_view_spec_tag,
 ) {
     private val lock = Any()
     private val indexedNodes = linkedMapOf<String, IndexedViewNode>()
@@ -500,7 +500,7 @@ fun View.debugNode(
     extra: Map<String, String> = emptyMap(),
 ): View {
     setTag(
-        R.id.debug_server_view_spec_tag,
+        R.id.debug_bridge_view_spec_tag,
         DebugViewNodeSpec(
             id = id,
             parentId = parentId,
