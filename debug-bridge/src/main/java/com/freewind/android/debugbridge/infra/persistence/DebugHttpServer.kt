@@ -1,5 +1,9 @@
 package com.freewind.android.debugbridge.infra.persistence
 
+import com.freewind.android.debugbridge.api.infrastructure.Serializer
+import com.freewind.android.debugbridge.api.models.ActionRequest
+import com.freewind.android.debugbridge.api.models.LogsClearResponse
+import com.freewind.android.debugbridge.api.models.MetaResponse
 import com.freewind.android.debugbridge.domain.handler.DebugBridgeHandler
 import com.freewind.android.debugbridge.domain.models.DebugActionRequest
 import com.freewind.android.debugbridge.domain.models.DebugActionResult
@@ -92,16 +96,13 @@ class DebugHttpServer(
                 val deletedCount = store.operations().value.size
                 store.clearOperations()
                 call.respondJsonSafely {
-                    // 这里是独立调试台与外部 AI 共用协议。
-                    // 若字段改名/删字段，必须同步：
-                    // 1. freewind-debug-bridge-web/src/api-spec.ts
-                    // 2. README 的接入说明
-                    // 3. gradlew assemble
-                    JSONObject().apply {
-                        put("accepted", true)
-                        put("message", "cleared")
-                        put("clearedCount", deletedCount)
-                    }.toString()
+                    Serializer.moshi.adapter(LogsClearResponse::class.java).toJson(
+                        LogsClearResponse(
+                            accepted = true,
+                            message = "cleared",
+                            clearedCount = deletedCount,
+                        ),
+                    )
                 }
             }
             get("/state") {
@@ -145,10 +146,12 @@ class DebugHttpServer(
     }
 
     private fun buildMetaJson(): String {
-        return JSONObject().apply {
-            put("appName", store.appName())
-            put("buildVersion", store.buildVersion().value)
-        }.toString()
+        return Serializer.moshi.adapter(MetaResponse::class.java).toJson(
+            MetaResponse(
+                appName = store.appName(),
+                buildVersion = store.buildVersion().value,
+            ),
+        )
     }
 
     private fun buildHelpJson(): String {
@@ -517,17 +520,8 @@ class DebugHttpServer(
     }
 
     private fun parseActionRequest(body: String): DebugActionRequest {
-        val json = readJsonObject(body)
-        return DebugActionRequest(
-            // /action 的可写字段要与 /help 里的 bodyFields、独立协议仓 src/api-spec.ts 同步。
-            action = json?.optString("action").orEmpty(),
-            targetId = json.readNullableString("targetId"),
-            text = json.readNullableString("text"),
-            dx = json.readNullableDouble("dx")?.toFloat(),
-            dy = json.readNullableDouble("dy")?.toFloat(),
-            args = json.readStringMap("args"),
-            source = json.readNullableString("source"),
-        )
+        return Serializer.moshi.adapter(ActionRequest::class.java).fromJson(body)
+            ?: throw IllegalArgumentException("invalid action body")
     }
 
     private fun parseSnapshotQuery(queryParams: Parameters): DebugSnapshotQuery {

@@ -352,17 +352,37 @@ curl "http://127.0.0.1:8765/snapshot?targetId=save_button&scope=branchToRoot&fie
 
 ## 协议来源
 
-本仓不再维护独立 API 文档。
+本仓不再维护独立 API 文档。唯一准绳在 sibling 仓 `freewind-debug-bridge-web`：
 
-唯一准绳：
+| 文件 | 用途 |
+|------|------|
+| `typespec/main.tsp` | 契约 SSOT（改协议先改这里） |
+| `typespec/generated/openapi.yaml` | 给其他语言/工具消费 |
 
-- `/Users/peng.li/workspace/freewind-debug-bridge-web/src/api-spec.ts`
+路径（本机）：
 
-修改协议时：
+- `/Users/peng.li/workspace/freewind-debug-bridge-web/typespec/main.tsp`
+- `/Users/peng.li/workspace/freewind-debug-bridge-web/typespec/generated/openapi.yaml`
 
-1. 先改那边类型
-2. 再回这里对齐实现
-3. 最后跑 `./gradlew :debug-bridge:assemble :demo-app:assemble`
+协议变更流程：
+
+1. 改 `freewind-debug-bridge-web/typespec/main.tsp`
+2. 那边执行 `pnpm generate`
+3. 本仓对齐 `DebugHttpServer.kt`、model 类与 `/help` 的 `bodyFields`
+4. 跑 `./gradlew :debug-bridge:assemble :demo-app:assemble`
+
+### 从 OpenAPI 生成 Kotlin 类型（对照用）
+
+需要 Java 8+，安装 [OpenAPI Generator](https://openapi-generator.tech/) 后：
+
+```bash
+OPENAPI=/Users/peng.li/workspace/freewind-debug-bridge-web/typespec/generated/openapi.yaml
+
+openapi-generator generate -i "$OPENAPI" -g kotlin -o /tmp/debug-bridge-kotlin \
+  --global-property models,supportingFiles
+```
+
+只生成 model，不生成 HTTP client（本库自带 Ktor server）。生成物用于对照字段，禁止手改后当 SSOT。
 
 当前 Android 侧已对齐的 route：
 

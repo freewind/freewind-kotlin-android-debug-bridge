@@ -50,18 +50,7 @@ data class DebugActionTarget(
     val actions: List<DebugActionSpec> = emptyList(),
 )
 
-// 动作请求。
-data class DebugActionRequest(
-    val action: String,
-    val targetId: String?,
-    val text: String?,
-    val dx: Float?,
-    val dy: Float?,
-    val args: Map<String, String> = emptyMap(),
-    val source: String? = null,
-)
-
-// 动作结果。
+// 动作请求见 WireTypes.kt（OpenAPI 生成 ActionRequest）。
 data class DebugActionResult(
     val ok: Boolean,
     val message: String,

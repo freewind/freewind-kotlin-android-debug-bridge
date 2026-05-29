@@ -89,11 +89,11 @@ class DebugBridgeHandler(
             action = request.action,
             targetId = request.targetId,
             text = request.text,
-            dx = request.dx,
-            dy = request.dy,
+            dx = request.dx?.toFloat(),
+            dy = request.dy?.toFloat(),
             success = completedResult.ok,
             message = completedResult.message,
-            extra = request.args + completedResult.toOperationDetails(),
+            extra = (request.args ?: emptyMap()) + completedResult.toOperationDetails(),
         )
         return completedResult
     }

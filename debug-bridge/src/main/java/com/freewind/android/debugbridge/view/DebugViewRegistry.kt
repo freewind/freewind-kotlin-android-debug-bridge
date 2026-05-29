@@ -315,7 +315,7 @@ class DebugViewRegistry(
         if (view !is CompoundButton) {
             return DebugActionResult(false, "target not checkable: $targetId")
         }
-        val raw = request.args["checked"] ?: request.text
+        val raw = request.args?.get("checked") ?: request.text
         val checked = raw?.toBooleanStrictOrNull() ?: return DebugActionResult(
             ok = false,
             message = "missing checked=true|false",
