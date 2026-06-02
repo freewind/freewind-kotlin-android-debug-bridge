@@ -40,16 +40,16 @@ import com.squareup.moshi.JsonClass
 data class SnapshotBounds (
 
     @Json(name = "left")
-    val left: kotlin.Double,
+    val left: java.math.BigDecimal,
 
     @Json(name = "top")
-    val top: kotlin.Double,
+    val top: java.math.BigDecimal,
 
     @Json(name = "width")
-    val width: kotlin.Double,
+    val width: java.math.BigDecimal,
 
     @Json(name = "height")
-    val height: kotlin.Double
+    val height: java.math.BigDecimal
 
 ) {
 
