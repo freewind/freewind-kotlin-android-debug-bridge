@@ -7,3 +7,5 @@ demo-app/build/
 web/dist/
 web/node_modules/
 debug-bridge/build/
+.codegraph/
+.cursor/
