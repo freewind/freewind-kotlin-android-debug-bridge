@@ -8,6 +8,15 @@ android {
     namespace = "com.freewind.android.debugbridge.demo"
     compileSdk = 35
 
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.freewind.android.debugbridge.demo"
         minSdk = 26
